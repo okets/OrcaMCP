@@ -1,6 +1,7 @@
 #include "OrcaMCPServer.hpp"
 #include <algorithm>
 #include <chrono>
+#include <boost/format.hpp>
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPMeshHealth.hpp"
 #include "OrcaMCPPresetConfigUtils.hpp"
