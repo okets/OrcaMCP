@@ -1171,3 +1171,361 @@ TEST_CASE("a rewritten JSON entry keeps its own keys in order", "[McpClientConfi
     CHECK(keys_in_order(entry["env"]) == std::vector<std::string>{"ZED", "ORCAMCP_TIMEOUT"});
     CHECK(entry["command"] == "/opt/orcamcp/python");
 }
+
+// A corpus of awkward but valid Codex configs, of the shapes three generations of hand-written line
+// scanning each guessed at and got wrong (docs/superpowers/specs/2026-11-18-connect-without-python-design.md,
+// OrcaMCPCodexToml.hpp): quoted, spaced and escaped headers, BOMs and CRLF, comments and multi-line
+// values that hold header-like text, arrays of arrays, subtables that stand apart, every TOML value
+// type elsewhere. Every one is driven through Connect, the startup refresh and Disconnect, and each
+// result must parse, hold exactly one of our tables with the bridge's args, and keep the user's own
+// marker line outside our table. The refused forms must be left byte for byte, and a file that is not
+// TOML at all must be refused by all three.
+
+namespace {
+
+struct CodexCorpusEntry
+{
+    std::string text;          // the config.toml as it starts
+    std::string marker;        // a distinctive string outside our table; empty when the entry has no content to keep
+    std::string after_connect; // the user's own line inside our table that Connect must keep; empty for none
+    std::string after_remove;  // content outside our table that must survive Disconnect; empty for none
+};
+
+// The shared bridge path an old table might already run, so a corpus table is one of ours.
+const char* const CORPUS_BRIDGE = "/h/.orcamcp/orcamcp-bridge.py";
+
+// A plain table of ours, LF-terminated, as a user of an earlier OrcaMCP would have left it.
+std::string corpus_table()
+{
+    return "[mcp_servers.orca-slicer]\n"
+           "command = \"python3\"\n"
+           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n";
+}
+
+const std::vector<CodexCorpusEntry>& codex_valid_corpus()
+{
+    static const std::vector<CodexCorpusEntry> corpus = [] {
+        std::vector<CodexCorpusEntry> entries;
+        // Nearly nothing: nothing outside the table to keep, so no marker.
+        entries.push_back({"", "", "", ""});
+        entries.push_back({std::string("keep_me_1 = 1\n"), "keep_me_1 = 1", "", ""});
+        entries.push_back({utf8_bom(), "", "", ""});
+        entries.push_back({utf8_bom() + corpus_table(), "", "", ""});
+        // A comment line can carry the marker: it is not ours, and must survive every edit.
+        entries.push_back({"# keep_me_2 = 1\n", "keep_me_2 = 1", "", ""});
+        // BOM around a table of ours, and a root key under the BOM.
+        entries.push_back({utf8_bom() + "keep_me_3 = 1\n" + corpus_table(), "keep_me_3 = 1", "", ""});
+        // CRLF everywhere, with and without our table.
+        entries.push_back({"keep_me_4 = 1\r\n[other]\r\nk = 1\r\n", "keep_me_4 = 1", "", "[other]"});
+        entries.push_back({"keep_me_5 = 1\r\n[mcp_servers.orca-slicer]\r\ncommand = \"python3\"\r\nargs = [\"" +
+                               std::string(CORPUS_BRIDGE) + "\"]\r\n",
+                           "keep_me_5 = 1", "", ""});
+        // Tabs and spaces around the equals signs and inside the header.
+        entries.push_back({"keep_me_6\t=\t1\n"
+                           "[\tmcp_servers\t.\torca-slicer\t]\n"
+                           "command\t=\t\"python3\"\n"
+                           "args\t=\t[\"" + std::string(CORPUS_BRIDGE) + "\"]\n",
+                           "keep_me_6", "", ""});
+        // Quoted and escaped spellings of our header.
+        entries.push_back({"keep_me_7 = 1\n"
+                           "[mcp_servers.\"orca-slicer\"]\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n",
+                           "keep_me_7 = 1", "", ""});
+        entries.push_back({"keep_me_8 = 1\n"
+                           "[mcp_servers.'orca-slicer']\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n",
+                           "keep_me_8 = 1", "", ""});
+        entries.push_back({"keep_me_9 = 1\n"
+                           "[mcp_servers.\"orca\\u002Dslicer\"]\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n",
+                           "keep_me_9 = 1", "", ""});
+        // Comments on the header line, after our keys, and inside a multi-line args array.
+        entries.push_back({"keep_me_10 = 1\n"
+                           "[mcp_servers.orca-slicer] # added by hand\n"
+                           "command = \"python3\" # the old bridge\n"
+                           "args = [ # over several lines\n"
+                           "  \"" + std::string(CORPUS_BRIDGE) + "\", # the bridge\n"
+                           "] # end\n"
+                           "enabled = true\n",
+                           "keep_me_10 = 1", "enabled = true", ""});
+        // An env subtable right after our table, and one separated from it by another table.
+        entries.push_back({"keep_me_11 = 1\n" + corpus_table() +
+                               "\n"
+                               "[mcp_servers.orca-slicer.env]\n"
+                               "ORCAMCP_TIMEOUT = \"300\"\n",
+                           "keep_me_11 = 1", "ORCAMCP_TIMEOUT = \"300\"", ""});
+        entries.push_back({"keep_me_12 = 1\n" + corpus_table() +
+                               "\n"
+                               "[other]\nk = 1\n"
+                               "\n"
+                               "[mcp_servers.orca-slicer.env]\n"
+                               "ORCAMCP_PORT = \"13625\"\n",
+                           "keep_me_12 = 1", "", "[other]\nk = 1"});
+        // env written as dotted keys inside our table: the table is still an editable table.
+        entries.push_back({"keep_me_13 = 1\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n"
+                           "env.X = \"1\"\n",
+                           "keep_me_13 = 1", "env.X = \"1\"", ""});
+        // The user's own keys and timeouts: kept by Connect, never shrunk, re-spelled or re-typed.
+        entries.push_back({"keep_me_14 = 1\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n"
+                           "enabled = true\n"
+                           "cwd = \"/x\"\n"
+                           "tool_timeout_sec = 600\n",
+                           "keep_me_14 = 1", "cwd = \"/x\"\ntool_timeout_sec = 600", ""});
+        entries.push_back({"keep_me_15 = 1\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n"
+                           "startup_timeout_sec = 1_000\n",
+                           "keep_me_15 = 1", "startup_timeout_sec = 1_000", ""});
+        entries.push_back({"keep_me_16 = 1\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n"
+                           "tool_timeout_sec = 600.0\n",
+                           "keep_me_16 = 1", "tool_timeout_sec = 600.0", ""});
+        entries.push_back({"keep_me_17 = 1\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n"
+                           "tool_timeout_sec = \"30\"\n",
+                           "keep_me_17 = 1", "tool_timeout_sec = \"30\"", ""});
+        // Header-like and key-like text inside multi-line strings: theirs, not tables of ours.
+        entries.push_back({"keep_me_18 = 1\n"
+                           "[notes]\n"
+                           "basic = \"\"\"\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "command = \"x\"\n"
+                           "\"\"\"\n",
+                           "keep_me_18 = 1", "", "[notes]\nbasic = \"\"\""});
+        entries.push_back({"keep_me_19 = 1\n"
+                           "[notes]\n"
+                           "literal = '''\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "command = \"x\"\n"
+                           "'''\n",
+                           "keep_me_19 = 1", "", "[notes]\nliteral = '''"});
+        // Arrays of arrays in our table and in another: inner lines starting with '[' are no headers.
+        entries.push_back({"keep_me_20 = 1\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n"
+                           "matrix = [\n"
+                           "  [1, 2],\n"
+                           "  [3, 4],\n"
+                           "]\n"
+                           "\n"
+                           "[other]\n"
+                           "grid = [[0]]\n",
+                           "keep_me_20 = 1", "matrix = [\n  [1, 2],\n  [3, 4],\n]", "[other]\ngrid = [[0]]"});
+        // Arrays of tables before and after our table, and a nested array of tables under another server.
+        entries.push_back({"keep_me_21 = 1\n"
+                           "[[other]]\nn = 1\n"
+                           "\n" +
+                               corpus_table() +
+                               "\n"
+                               "[[mcp_servers.other.tools]]\nname = \"t\"\n"
+                               "\n"
+                               "[[other]]\nn = 2\n",
+                           "keep_me_21 = 1", "", "[[mcp_servers.other.tools]]"});
+        // An explicit empty [mcp_servers] and other servers around our table.
+        entries.push_back({"keep_me_22 = 1\n"
+                           "[mcp_servers]\n"
+                           "[mcp_servers.a]\n"
+                           "command = \"a\"\n"
+                           "\n" +
+                               corpus_table() +
+                               "\n"
+                               "[mcp_servers.b]\n"
+                               "command = \"b\"\n",
+                           "keep_me_22 = 1", "", "[mcp_servers.a]\ncommand = \"a\""});
+        // Our table with nothing in it, and one holding only a timeout: Connect fills what is missing.
+        entries.push_back({"keep_me_23 = 1\n[mcp_servers.orca-slicer]\n", "keep_me_23 = 1", "", ""});
+        entries.push_back({"keep_me_24 = 1\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "tool_timeout_sec = 600\n",
+                           "keep_me_24 = 1", "tool_timeout_sec = 600", ""});
+        // The last line without a trailing newline, with and without our table.
+        entries.push_back({"keep_me_25 = 1", "keep_me_25 = 1", "", ""});
+        entries.push_back({"keep_me_26 = 1\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]",
+                           "keep_me_26 = 1", "", ""});
+        // Every kind of value elsewhere: the parser reads them, and an edit must not move one.
+        // "ключ" and "é" = "ü" written as UTF-8 byte escapes, so the source stays plain ASCII.
+        entries.push_back({"keep_me_27 = 1\n"
+                           "[kinds]\n"
+                           "n = nan\n"
+                           "p = inf\n"
+                           "m = -inf\n"
+                           "h = 0x1F\n"
+                           "e = 1e5\n"
+                           "d = 1979-05-27\n"
+                           "dt = 1979-05-27T07:32:00Z\n"
+                           "t = 07:32:00\n"
+                           "big = 9223372036854775807\n"
+                           "\"\xD0\xBA\xD0\xBB\xD1\x8E\xD1\x87\" = 1\n"
+                           "\"\xC3\xA9\" = \"\xC3\xBC\"\n",
+                           "keep_me_27 = 1", "", "big = 9223372036854775807"});
+        // A neighbour whose name only starts with ours: never touched.
+        entries.push_back({"keep_me_28 = 1\n"
+                           "[mcp_servers.orca-slicer-old]\n"
+                           "command = \"not ours\"\n"
+                           "\n" +
+                               corpus_table(),
+                           "keep_me_28 = 1", "", "[mcp_servers.orca-slicer-old]\ncommand = \"not ours\""});
+        // Quoted key spellings of our own keys, and a quoted subtable header.
+        entries.push_back({"keep_me_29 = 1\n"
+                           "[mcp_servers.orca-slicer]\n"
+                           "\"command\" = \"python3\"\n"
+                           "'args' = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n",
+                           "keep_me_29 = 1", "", ""});
+        entries.push_back({"keep_me_30 = 1\n"
+                           "[mcp_servers.\"orca-slicer\"] # quoted, with env\n"
+                           "command = \"python3\"\n"
+                           "args = [\"" + std::string(CORPUS_BRIDGE) + "\"]\n"
+                           "[mcp_servers.\"orca-slicer\".env]\n"
+                           "A = \"b\"\n",
+                           "keep_me_30 = 1", "A = \"b\"", ""});
+        // An inline table elsewhere: its braces are values, never a header or a statement of ours.
+        entries.push_back({"keep_me_31 = 1\n"
+                           "[other]\n"
+                           "conf = { a = 1, b = [1, 2] }\n"
+                           "\n" +
+                               corpus_table(),
+                           "keep_me_31 = 1", "", "conf = { a = 1, b = [1, 2] }"});
+        return entries;
+    }();
+    return corpus;
+}
+
+// Valid TOML that defines our server in a form this code will not guess at: Connect refuses it,
+// Disconnect refuses it, and the file is never touched.
+const std::vector<std::string>& codex_refused_corpus()
+{
+    static const std::vector<std::string> corpus = {
+        "keep_me_r1 = 1\n[mcp_servers]\norca-slicer.command = \"x\"\n",
+        "keep_me_r2 = 1\nmcp_servers = { orca-slicer = { command = \"x\" } }\n",
+        "keep_me_r3 = 1\n[[mcp_servers.orca-slicer]]\ncommand = \"x\"\n",
+        "keep_me_r4 = 1\nmcp_servers.orca-slicer.command = \"x\"\n",
+    };
+    return corpus;
+}
+
+// Not TOML at all: Codex could not read these either, so all three paths refuse and touch nothing.
+const std::vector<std::string>& codex_invalid_corpus()
+{
+    static const std::vector<std::string> corpus = {
+        "[mcp_servers.orca-slicer]\ncommand = \"python3\"\nargs = [\"" + std::string(CORPUS_BRIDGE) + "\"\n", // the array never closes
+        "[a]\nk = 1\n\n[a]\nj = 2\n",                                                                        // a table defined twice
+        "keep_me_bad = 1\nkey = \n",                                                                         // no value
+        "note = \"\"\" an unclosed string\n",                                                                // the string never closes
+        "[mcp_servers.orca-slicer]\ncommand = \"a\"\ncommand = \"b\"\n",                                     // a key twice in our table
+        "[mcp_servers.orca-slicer]\nk = 1\n\n[mcp_servers.orca-slicer]\nj = 2\n",                            // our table defined twice
+    };
+    return corpus;
+}
+
+} // namespace
+
+TEST_CASE("every Codex config in the corpus is edited into valid TOML or left byte for byte", "[McpClientConfig]")
+{
+    using Slic3r::GUI::OrcaMCP::read_codex_server;
+    const auto command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+
+    std::vector<std::string> refused_though_valid;
+
+    for (const CodexCorpusEntry& entry : codex_valid_corpus()) {
+        ScopedTemporaryDir dir("orcamcp-codex-corpus");
+        const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+        write(codex.config_path, entry.text);
+        INFO(entry.text);
+
+        std::string error;
+        const bool  written = MCPClientConfig::write_client_entry(codex, command, error);
+        if (written) {
+            // What Connect wrote is TOML Codex can read, holds our table once with the bridge's args,
+            // and keeps the user's own content outside it. CHECK, never REQUIRE: one bad entry must not
+            // hide the ones after it.
+            const std::string                connected = read_file(codex.config_path);
+            const OrcaMCP::CodexServerRead after_write = read_codex_server(connected, "orca-slicer");
+            CHECK(after_write.parse_error.empty());
+            CHECK(after_write.table.has_value());
+            CHECK(after_write.args == command.args);
+            if (!entry.marker.empty())
+                CHECK(connected.find(entry.marker) != std::string::npos);
+            // The user's own line inside our table survives Connect; Disconnect removes it with the
+            // entry, which is what Disconnect is for, so it is checked here and not after removal.
+            if (!entry.after_connect.empty())
+                CHECK(connected.find(entry.after_connect) != std::string::npos);
+
+            // What Connect just wrote is current: the next startup refresh writes nothing at all.
+            CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Current);
+            CHECK(read_file(codex.config_path) == connected);
+
+            // Disconnect takes our table and its subtables out, and nothing else.
+            CHECK(MCPClientConfig::remove_from_toml_config(codex.config_path, error));
+            const std::string      removed = read_file(codex.config_path);
+            const OrcaMCP::CodexServerRead after_remove = read_codex_server(removed, "orca-slicer");
+            CHECK(after_remove.parse_error.empty());
+            CHECK_FALSE(after_remove.named);
+            if (!entry.marker.empty())
+                CHECK(removed.find(entry.marker) != std::string::npos);
+            if (!entry.after_remove.empty())
+                CHECK(removed.find(entry.after_remove) != std::string::npos);
+        } else {
+            // A refusal of a valid config is itself the regression this corpus guards against -- the
+            // list after the loop names it -- but a refusal must at least never touch the file.
+            INFO(error);
+            CHECK(read_file(codex.config_path) == entry.text);
+            CHECK_FALSE(error.empty());
+            refused_though_valid.push_back(entry.text);
+        }
+    }
+    INFO("configs a valid corpus entry was refused editing: " << refused_though_valid.size());
+    CHECK(refused_though_valid.empty());
+
+    for (const std::string& before : codex_refused_corpus()) {
+        ScopedTemporaryDir dir("orcamcp-codex-refused");
+        const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+        write(codex.config_path, before);
+        INFO(before);
+
+        std::string error;
+        CHECK_FALSE(MCPClientConfig::write_client_entry(codex, command, error));
+        CHECK_FALSE(error.empty());
+        CHECK(read_file(codex.config_path) == before); // refused means untouched
+
+        CHECK_FALSE(MCPClientConfig::remove_from_toml_config(codex.config_path, error));
+        CHECK_FALSE(error.empty());
+        CHECK(read_file(codex.config_path) == before);
+    }
+
+    for (const std::string& broken : codex_invalid_corpus()) {
+        ScopedTemporaryDir dir("orcamcp-codex-invalid");
+        const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+        write(codex.config_path, broken);
+        INFO(broken);
+
+        std::string error;
+        CHECK_FALSE(MCPClientConfig::write_client_entry(codex, command, error));
+        CHECK(error.find("is not valid TOML") != std::string::npos);
+        CHECK(read_file(codex.config_path) == broken);
+
+        CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Failed);
+        CHECK(error.find("is not valid TOML") != std::string::npos);
+
+        CHECK_FALSE(MCPClientConfig::remove_from_toml_config(codex.config_path, error));
+        CHECK(error.find("is not valid TOML") != std::string::npos);
+        CHECK(read_file(codex.config_path) == broken); // byte for byte, through all three refusals
+    }
+}
