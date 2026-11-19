@@ -31,6 +31,7 @@ bool parse_paint_mode(const std::string& name, PaintMode& out)
     if (lower == "seam")       { out = PaintMode::Seam;      return true; }
     if (lower == "fuzzy_skin") { out = PaintMode::FuzzySkin; return true; }
     if (lower == "texture")    { out = PaintMode::Texture;   return true; }
+    if (lower == "painted_modifier") { out = PaintMode::PaintedModifier; return true; }
     return false;
 }
 
@@ -42,6 +43,7 @@ const char* paint_mode_name(PaintMode mode)
     case PaintMode::Seam:      return "seam";
     case PaintMode::FuzzySkin: return "fuzzy_skin";
     case PaintMode::Texture:   return "texture";
+    case PaintMode::PaintedModifier: return "painted_modifier";
     }
     return "color";
 }
@@ -52,6 +54,8 @@ FacetsAnnotation& annotation_for_mode(ModelVolume& mv, PaintMode mode)
     case PaintMode::Support:   return mv.supported_facets;
     case PaintMode::Seam:      return mv.seam_facets;
     case PaintMode::FuzzySkin: return mv.fuzzy_skin_facets;
+    // The painted modifier's own annotation: the gizmo paints it over the host's mesh (GLGizmoPaintedModifier).
+    case PaintMode::PaintedModifier: return mv.painted_modifier_facets;
     case PaintMode::Texture:   throw std::invalid_argument("a texture mask needs its layer: use annotation_for");
     case PaintMode::Color:     break;
     }
@@ -87,6 +91,9 @@ int max_paint_state_for(PaintMode mode)
     case PaintMode::FuzzySkin: return int(EnforcerBlockerType::FUZZY_SKIN);
     // A texture layer's mask holds one state: painted (the panel deserializes it with ENFORCER as the limit).
     case PaintMode::Texture:   return int(EnforcerBlockerType::ENFORCER);
+    // A painted modifier holds one state too: painted (GLGizmoPaintedModifier writes ENFORCER where
+    // the modifier applies; the slicer reads exactly "is this facet of the host painted").
+    case PaintMode::PaintedModifier: return int(EnforcerBlockerType::ENFORCER);
     case PaintMode::Color:     break;
     }
     return max_paint_state();
@@ -100,11 +107,12 @@ bool parse_paint_state(PaintMode mode, const std::string& name, int& out_state)
     if (lower == "none") { out_state = int(EnforcerBlockerType::NONE); return true; }
     // "fuzzy_skin" is the token paint_state_label hands back for FuzzySkin's enforcer state, so it
     // has to parse back to the same state or a caller who echoes a read into a write gets rejected.
-    if (lower == "enforcer" || (mode == PaintMode::FuzzySkin && lower == "fuzzy_skin") || (mode == PaintMode::Texture && lower == "painted")) {
+    if (lower == "enforcer" || (mode == PaintMode::FuzzySkin && lower == "fuzzy_skin") ||
+        ((mode == PaintMode::Texture || mode == PaintMode::PaintedModifier) && lower == "painted")) {
         out_state = int(EnforcerBlockerType::ENFORCER);
         return true;
     }
-    if (lower == "blocker" && mode != PaintMode::FuzzySkin && mode != PaintMode::Texture) {
+    if (lower == "blocker" && mode != PaintMode::FuzzySkin && mode != PaintMode::Texture && mode != PaintMode::PaintedModifier) {
         out_state = int(EnforcerBlockerType::BLOCKER);
         return true;
     }
@@ -125,8 +133,10 @@ std::string paint_state_label(PaintMode mode, int state)
     if (state == int(EnforcerBlockerType::NONE))
         return "none";
     if (state == int(EnforcerBlockerType::ENFORCER))
-        return mode == PaintMode::FuzzySkin ? "fuzzy_skin" : mode == PaintMode::Texture ? "painted" : "enforcer";
-    if (state == int(EnforcerBlockerType::BLOCKER) && mode != PaintMode::Texture)
+        return mode == PaintMode::FuzzySkin ? "fuzzy_skin"
+               : (mode == PaintMode::Texture || mode == PaintMode::PaintedModifier) ? "painted"
+                                                                                    : "enforcer";
+    if (state == int(EnforcerBlockerType::BLOCKER) && mode != PaintMode::Texture && mode != PaintMode::PaintedModifier)
         return "blocker";
     return "state " + std::to_string(state);
 }

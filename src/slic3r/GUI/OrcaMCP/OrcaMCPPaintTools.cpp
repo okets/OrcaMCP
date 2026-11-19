@@ -177,7 +177,7 @@ bool read_texture_slot(const nlohmann::json& value, int& slot, std::string& erro
     return true;
 }
 
-const char* const UNKNOWN_MODE_MESSAGE = "Unknown mode; expected color, support, seam, fuzzy_skin or texture";
+const char* const UNKNOWN_MODE_MESSAGE = "Unknown mode; expected color, support, seam, fuzzy_skin, texture or painted_modifier";
 
 // The annotation a paint_object call addresses: `mode` (default color) and, for texture, `texture_layer`.
 // texture_layer is the slot (0..7) of a layer of the object's texture displacement stack, and belongs to mode texture only.

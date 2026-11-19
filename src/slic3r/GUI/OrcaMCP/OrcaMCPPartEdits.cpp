@@ -37,13 +37,6 @@ const std::vector<std::pair<std::string, ModelVolumeType>>& named_volume_types()
     return types;
 }
 
-std::string object_text(int object_id) { return "Object " + std::to_string(object_id); }
-
-std::string volume_text(int object_id, int volume_id)
-{
-    return "Volume " + std::to_string(volume_id) + " of object " + std::to_string(object_id);
-}
-
 bool is_support_volume_type(ModelVolumeType type)
 {
     return type == ModelVolumeType::SUPPORT_BLOCKER || type == ModelVolumeType::SUPPORT_ENFORCER;
@@ -84,6 +77,13 @@ const std::set<std::string>& object_setting_keys()
 }
 
 } // namespace
+
+std::string object_text(int object_id) { return "Object " + std::to_string(object_id); }
+
+std::string volume_text(int object_id, int volume_id)
+{
+    return "Volume " + std::to_string(volume_id) + " of object " + std::to_string(object_id);
+}
 
 // ---- Reading a call ----
 

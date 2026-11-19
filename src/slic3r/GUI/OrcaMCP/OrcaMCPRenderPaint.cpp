@@ -56,6 +56,7 @@ PaintChannel paint_channel_of(const PaintTint& tint)
     if (tint.channel == "support")    return PaintChannel(PaintMode::Support);
     if (tint.channel == "seam")       return PaintChannel(PaintMode::Seam);
     if (tint.channel == "fuzzy_skin") return PaintChannel(PaintMode::FuzzySkin);
+    if (tint.channel == "painted_modifier") return PaintChannel(PaintMode::PaintedModifier);
     return PaintChannel::texture(tint.texture_layer);
 }
 

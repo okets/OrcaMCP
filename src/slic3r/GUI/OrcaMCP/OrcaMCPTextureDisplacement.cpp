@@ -1040,7 +1040,7 @@ bool resolve_paint_selection(const nlohmann::json& params, const std::vector<int
     out            = PaintSelection{};
     out.named_mode = params.contains("mode");
     if (out.named_mode && !(params["mode"].is_string() && parse_paint_mode(params["mode"].get<std::string>(), mode))) {
-        error = "Unknown mode; expected color, support, seam, fuzzy_skin or texture";
+        error = "Unknown mode; expected color, support, seam, fuzzy_skin, texture or painted_modifier";
         return false;
     }
     if (!(out.named_mode && mode == PaintMode::Texture) && params.contains("texture_layer")) {

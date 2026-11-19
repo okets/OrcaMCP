@@ -43,6 +43,10 @@ std::optional<bool> read_flag(const nlohmann::json& params, const std::string& k
 // A text argument `key`: nothing when left out; given null or as anything but text, `error` says so.
 std::optional<std::string> read_text(const nlohmann::json& params, const std::string& key, std::string& error);
 
+// How refusals name an object and a volume: "Object 2", "Volume 1 of object 2".
+std::string object_text(int object_id);
+std::string volume_text(int object_id, int volume_id);
+
 // ---- Volumes ----
 
 // The type names the part tools take, as get_object_info reports them: "part", "negative_volume",

@@ -309,6 +309,50 @@ std::vector<NextStep> texture_paint_next_steps(int object_id, int slot, bool pai
     return steps;
 }
 
+std::vector<NextStep> painted_modifier_paint_next_steps(int object_id, int volume_id, bool painted, bool has_settings)
+{
+    std::vector<NextStep> steps;
+    const std::string     what   = "volume " + std::to_string(volume_id) + " of object " + std::to_string(object_id);
+    const nlohmann::json  target = {{"object_id", object_id}, {"volume_id", volume_id}};
+    if (!painted)
+        steps.push_back({"paint_object",
+                         what + " is a painted modifier painted nowhere, so it applies nowhere: paint_object with mode "
+                                "painted_modifier paints where it goes; replace the call's selection with the faces to change "
+                                "-- a box, a sphere, connected from a pick_facet, or visible from a view",
+                         {{"object_id", object_id},
+                          {"volume_id", volume_id},
+                          {"mode", "painted_modifier"},
+                          {"selection", "visible"},
+                          {"view", {{"direction", "front"}}},
+                          {"state", "painted"}}});
+    if (!has_settings)
+        steps.push_back({"set_object_config",
+                         "a painted modifier changes only the settings it is given: set_object_config with volume_id " +
+                             std::to_string(volume_id) + " gives them, for the painted part of its host",
+                         target});
+    return steps;
+}
+
+std::vector<NextStep> add_painted_modifier_next_steps(int object_id, int host_volume_id)
+{
+    return {{"add_volume",
+             "object " + std::to_string(object_id) + " has no painted modifier: add_volume with type painted_modifier adds one "
+                                                     "over volume " +
+                 std::to_string(host_volume_id) + ", the part to paint, sharing its mesh and placement",
+             {{"object_id", object_id}, {"type", "painted_modifier"}, {"host_volume_id", host_volume_id}}}};
+}
+
+std::vector<NextStep> orphaned_painted_modifier_next_steps(int object_id, const std::vector<int>& ids)
+{
+    if (ids.empty())
+        return {};
+    return {{"delete_object",
+             "volumes " + listed_ids(ids) + " of object " + std::to_string(object_id) +
+                 " are painted modifiers whose part is no longer a part, so they print nothing: delete_object with "
+                 "volume_id removes one",
+             {{"object_id", object_id}, {"volume_id", ids.front()}}}};
+}
+
 std::vector<NextStep> bake_next_steps(int object_id, bool needs_bake)
 {
     if (!needs_bake)

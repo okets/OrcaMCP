@@ -82,6 +82,7 @@ add_executable(${_TEST_NAME}_tests
     test_scalar_params.cpp
     test_paint_select.cpp
     test_paint_remap.cpp
+    test_painted_modifier_paint.cpp
     test_mcp_texture_displacement.cpp
     test_mcp_texture_files.cpp
     test_extrusion_features.cpp

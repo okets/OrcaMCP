@@ -484,6 +484,68 @@ TEST_CASE("A new primitive is pointed at move_object, and a modifier at its sett
     CHECK(new_volume_next_steps(2, 3, "negative_volume", false).empty());
 }
 
+TEST_CASE("A painted modifier painted nowhere points at painting it, then at its settings", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> both = painted_modifier_paint_next_steps(0, 2, false, false);
+    REQUIRE(both.size() == 2);
+    CHECK(both[0].tool == "paint_object");
+    CHECK(both[0].arguments == json{{"object_id", 0}, {"volume_id", 2}, {"mode", "painted_modifier"}, {"selection", "visible"},
+                                    {"view", {{"direction", "front"}}}, {"state", "painted"}});
+    CHECK(mentions(both[0].why, "volume 2 of object 0"));
+    // The `visible` selection is a starting point: the why sends the agent to the faces it means.
+    CHECK(mentions(both[0].why, "box"));
+    CHECK(mentions(both[0].why, "sphere"));
+    CHECK(mentions(both[0].why, "pick_facet"));
+    CHECK(mentions(both[0].why, "visible"));
+    // Every key and value of the step passes paint_object's schema but the mode value, which joins the
+    // enum with the tool branch that takes it -- as the same step under the color mode shows.
+    NextStep paint_as_color = both[0];
+    paint_as_color.arguments["mode"] = "color";
+    CHECK(unusable(paint_as_color) == std::nullopt);
+
+    CHECK(both[1].tool == "set_object_config");
+    CHECK(both[1].arguments == json{{"object_id", 0}, {"volume_id", 2}});
+    CHECK(unusable(both[1]) == std::nullopt);
+
+    // Painted and given settings: nothing left to suggest. Only one of the two holds: only the other.
+    CHECK(painted_modifier_paint_next_steps(0, 2, true, true).empty());
+    const std::vector<NextStep> only_settings = painted_modifier_paint_next_steps(0, 2, true, false);
+    REQUIRE(only_settings.size() == 1);
+    CHECK(only_settings[0].tool == "set_object_config");
+    const std::vector<NextStep> only_paint = painted_modifier_paint_next_steps(0, 2, false, true);
+    REQUIRE(only_paint.size() == 1);
+    CHECK(only_paint[0].tool == "paint_object");
+}
+
+TEST_CASE("An object with no painted modifier points at adding one over a part", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = add_painted_modifier_next_steps(0, 1);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "add_volume");
+    CHECK(steps[0].arguments == json{{"object_id", 0}, {"type", "painted_modifier"}, {"host_volume_id", 1}});
+    CHECK(mentions(steps[0].why, "no painted modifier"));
+    CHECK(mentions(steps[0].why, "volume 1"));
+    // add_volume declares host_volume_id, and the painted_modifier type value, with the branch that takes
+    // them; every other part of the step passes today's schema -- as it shows with the modifier type and
+    // without the host argument.
+    NextStep as_modifier = steps[0];
+    as_modifier.arguments["type"]          = "modifier";
+    as_modifier.arguments.erase("host_volume_id");
+    CHECK(unusable(as_modifier) == std::nullopt);
+}
+
+TEST_CASE("Painted modifiers left without a part point at deleting them, naming every one", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = orphaned_painted_modifier_next_steps(0, {3, 4});
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "delete_object");
+    CHECK(steps[0].arguments == json{{"object_id", 0}, {"volume_id", 3}}); // the first; the why names all
+    CHECK(mentions(steps[0].why, "3 and 4"));
+    CHECK(mentions(steps[0].why, "print nothing"));
+    CHECK(unusable(steps[0]) == std::nullopt);
+    CHECK(orphaned_painted_modifier_next_steps(0, {}).empty());
+}
+
 TEST_CASE("An assembly is pointed at get_object_info, to list its volumes", "[McpNextSteps][orcamcp]")
 {
     const std::vector<NextStep> steps = assembled_next_steps(5);

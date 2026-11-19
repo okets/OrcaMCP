@@ -145,6 +145,20 @@ std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabl
 // bake_texture_displacement. Each step only when it applies, so a layer painted with nothing else to bake leads nowhere.
 std::vector<NextStep> texture_paint_next_steps(int object_id, int slot, bool painted, bool needs_bake);
 
+// What a painted modifier that fixes nothing yet leads to: painted nowhere it applies nowhere, so paint_object with
+// mode painted_modifier (its `visible` selection and `view` are a starting point: the faces to change go in their
+// place -- a box, a sphere, `connected` from a pick_facet, or `visible` from a view); and a modifier with no settings
+// of its own changes nothing it would apply, so set_object_config with volume_id gives them. Nothing once both hold.
+std::vector<NextStep> painted_modifier_paint_next_steps(int object_id, int volume_id, bool painted, bool has_settings);
+
+// What an object with no painted modifier leads to: add_volume with type painted_modifier adds one over a part,
+// ready to paint.
+std::vector<NextStep> add_painted_modifier_next_steps(int object_id, int host_volume_id);
+
+// What painted modifiers whose part stopped being a part lead to: delete_object of the first, the `why` naming every
+// one -- without a part to paint on, they print nothing. Nothing when none.
+std::vector<NextStep> orphaned_painted_modifier_next_steps(int object_id, const std::vector<int>& ids);
+
 // What an object's painted texture layers lead to: bake_texture_displacement, since nothing reaches the print until
 // they are baked into the mesh. None when nothing is painted.
 std::vector<NextStep> bake_next_steps(int object_id, bool needs_bake);

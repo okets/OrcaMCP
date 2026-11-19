@@ -17,16 +17,18 @@
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
-// Which of the four FacetsAnnotation members on a ModelVolume a call addresses. All four are the
-// same type and the same machinery (Model.hpp:875-884: supported_facets, seam_facets,
-// mmu_segmentation_facets, fuzzy_skin_facets); only the meaning of the per-facet state differs,
-// which is why one tool with a mode parameter closes four gizmo-shaped gaps.
+// Which of the five FacetsAnnotation members on a ModelVolume a call addresses. All five are the
+// same type and the same machinery (Model.hpp: supported_facets, seam_facets,
+// mmu_segmentation_facets, fuzzy_skin_facets, painted_modifier_facets); only the meaning of the
+// per-facet state differs, which is why one tool with a mode parameter closes five gizmo-shaped gaps.
 // Texture is the texture displacement panel's per-layer mask (ModelVolume::texture_displacement_facet): one
 // annotation per layer slot, so it is addressed by a PaintChannel, not by the mode alone.
-enum class PaintMode { Color, Support, Seam, FuzzySkin, Texture };
+// PaintedModifier is the painted modifier gizmo's own annotation (ModelVolume::painted_modifier_facets):
+// it lives on the modifier volume, whose mesh and frame are the host part's surface it is painted over.
+enum class PaintMode { Color, Support, Seam, FuzzySkin, Texture, PaintedModifier };
 
 // What a paint call addresses: a mode, and for Texture the layer slot (0..7) whose mask it is. Converts
-// implicitly from a PaintMode, so the four modes pass as before.
+// implicitly from a PaintMode, so the plain modes pass as before.
 struct PaintChannel
 {
     PaintMode mode          = PaintMode::Color;
@@ -51,8 +53,8 @@ struct PaintChannel
     }
 };
 
-// "color" | "support" | "seam" | "fuzzy_skin" | "texture", any case (texture needs a layer, so its
-// callers read texture_layer too). Returns false and leaves `out` alone
+// "color" | "support" | "seam" | "fuzzy_skin" | "texture" | "painted_modifier", any case (texture needs a
+// layer, so its callers read texture_layer too). Returns false and leaves `out` alone
 // otherwise. Case-insensitive to match parse_paint_axis: both parsers are reached from the same
 // MCP tool's parameters, and having them disagree about case costs a caller a wasted round trip.
 // Brim ears are deliberately not a mode: they are BrimPoints on the ModelObject (Model.hpp:390),
@@ -62,7 +64,7 @@ const char* paint_mode_name(PaintMode mode);
 
 FacetsAnnotation&       annotation_for_mode(ModelVolume& mv, PaintMode mode);
 const FacetsAnnotation& annotation_for_mode(const ModelVolume& mv, PaintMode mode);
-// The annotation a channel addresses: annotation_for_mode for the four modes, the layer's mask for Texture.
+// The annotation a channel addresses: annotation_for_mode for the plain modes, the layer's mask for Texture.
 FacetsAnnotation&       annotation_for(ModelVolume& mv, const PaintChannel& channel);
 const FacetsAnnotation& annotation_for(const ModelVolume& mv, const PaintChannel& channel);
 
@@ -75,13 +77,14 @@ int max_paint_state();
 // The largest state `mode` itself can hold, which is the bound a write is validated against.
 // Color addresses filament slots 1..max_paint_state(); Support and Seam only distinguish
 // NONE/ENFORCER/BLOCKER; FuzzySkin only NONE/FUZZY_SKIN (TriangleSelector.hpp:19 aliases
-// FUZZY_SKIN to ENFORCER, and GLGizmoFuzzySkin.hpp:29-30 paints nothing else). Centralised here
+// FUZZY_SKIN to ENFORCER, and GLGizmoFuzzySkin.hpp:29-30 paints nothing else); Texture and
+// PaintedModifier only NONE/ENFORCER (painted, or not). Centralised here
 // because every caller that writes a state needs the same bound, and a copy of it per tool is
-// how the four modes drift apart.
+// how the modes drift apart.
 int max_paint_state_for(PaintMode mode);
 
 // Raw EnforcerBlockerType value for a caller-supplied state name, for every mode except Color:
-// "none" -> 0, "enforcer" -> 1, "blocker" -> 2. Texture: "none" -> 0, "painted" or "enforcer" -> 1, no blocker. FuzzySkin also accepts "fuzzy_skin" as a synonym
+// "none" -> 0, "enforcer" -> 1, "blocker" -> 2. Texture and PaintedModifier: "none" -> 0, "painted" or "enforcer" -> 1, no blocker. FuzzySkin also accepts "fuzzy_skin" as a synonym
 // for "enforcer" (both -> 1) but rejects "blocker" (TriangleSelector.hpp:19 aliases FUZZY_SKIN to
 // ENFORCER, and GLGizmoFuzzySkin.hpp:29-30 paints only FUZZY_SKIN and NONE); the synonym exists
 // because paint_state_label(FuzzySkin, 1) reads back as "fuzzy_skin", and that token has to parse
@@ -94,6 +97,7 @@ bool parse_paint_state(PaintMode mode, const std::string& name, int& out_state);
 // "state <n>" for n above max_paint_state() -- a value the slicer could not have produced, so it
 // is reported as out of domain rather than as a plausible-looking filament slot.
 // Support and Seam: "none" / "enforcer" / "blocker". FuzzySkin: "none" / "fuzzy_skin".
+// Texture and PaintedModifier: "none" / "painted".
 // Every label parse_paint_state can consume round-trips back to the same state for its mode.
 std::string paint_state_label(PaintMode mode, int state);
 

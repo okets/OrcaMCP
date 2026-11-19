@@ -13,8 +13,6 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 namespace {
 
-std::string object_text(int object_id) { return "Object " + std::to_string(object_id); }
-
 bool footprints_overlap(const BoundingBoxf3& a, const BoundingBoxf3& b)
 {
     return a.min.x() < b.max.x() && b.min.x() < a.max.x() && a.min.y() < b.max.y() && b.min.y() < a.max.y();
