@@ -9,6 +9,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "OrcaMCPPaintModel.hpp"
+
 // The decisions of the painted-modifier forms of the paint and part tools apart from the app, so they
 // are tested without it (tests/slic3rutils/test_painted_modifier_paint.cpp). A painted modifier
 // (ModelVolumeType::PAINTED_MODIFIER, upstream) is a volume that shares the mesh and placement of the
@@ -74,10 +76,27 @@ nlohmann::json painted_modifier_row_fields(const ModelObject& object, std::size_
 // How much of the volume's host surface its paint claims: {painted_facets, coverage_percent} of state
 // painted. Builds a selector over the mesh, so it is asked for only where a response reports coverage.
 nlohmann::json painted_modifier_coverage_json(const ModelVolume& painted_modifier);
+// The same from paint already read (a write's own `painted`, computed off the main thread).
+nlohmann::json painted_modifier_coverage_json(const std::vector<PaintedStateInfo>& painted);
 
 // The painted modifiers on volume `volume_id` that a change of its type to `to` would leave without a
 // part to paint on: them, when `to` is not MODEL_PART (call this before the change); none otherwise.
 std::vector<int> painted_modifiers_orphaned_by_type_change(const ModelObject& object, int volume_id, ModelVolumeType to);
+
+// ---- paint_object's painted_modifier arguments ----
+
+// Why a paint_object call without a selection cannot run, or nothing: every mode needs one, but mode
+// painted_modifier with depth_mm alone changes the depth and paints nothing (the gizmo's Depth field).
+std::optional<std::string> missing_selection_refusal(const PaintChannel& channel, bool has_selection, bool has_depth);
+
+// Why paint_object's depth_mm cannot be taken, or nothing: it belongs to mode painted_modifier, within the
+// gizmo's range (read_depth_mm).
+std::optional<std::string> depth_argument_refusal(const PaintChannel& channel, const nlohmann::json& params);
+
+// The volume a connected fill's facet seed starts on: pick_facet names the part a ray hit, which for a painted
+// modifier is its host -- the same mesh and the same facet numbers -- so in mode painted_modifier a seed on the
+// host of `painted_modifier_id` is that modifier's. Any other seed is left as given.
+int seed_volume_for_mode(const ModelObject& object, const PaintChannel& channel, int painted_modifier_id, int seed_volume_id);
 
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

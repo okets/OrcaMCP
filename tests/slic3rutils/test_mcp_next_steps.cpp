@@ -497,11 +497,7 @@ TEST_CASE("A painted modifier painted nowhere points at painting it, then at its
     CHECK(mentions(both[0].why, "sphere"));
     CHECK(mentions(both[0].why, "pick_facet"));
     CHECK(mentions(both[0].why, "visible"));
-    // Every key and value of the step passes paint_object's schema but the mode value, which joins the
-    // enum with the tool branch that takes it -- as the same step under the color mode shows.
-    NextStep paint_as_color = both[0];
-    paint_as_color.arguments["mode"] = "color";
-    CHECK(unusable(paint_as_color) == std::nullopt);
+    CHECK(unusable(both[0]) == std::nullopt);
 
     CHECK(both[1].tool == "set_object_config");
     CHECK(both[1].arguments == json{{"object_id", 0}, {"volume_id", 2}});
@@ -712,6 +708,8 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
             steps.push_back(std::move(step));
     for (NextStep& step : new_volume_next_steps(0, 1, "modifier", true))
         steps.push_back(std::move(step));
+    for (NextStep& step : painted_modifier_paint_next_steps(0, 2, false, false))
+        steps.push_back(std::move(step));
     for (NextStep& step : add_painted_modifier_next_steps(0, 1))
         steps.push_back(std::move(step));
     for (NextStep& step : orphaned_painted_modifier_next_steps(0, {3, 4}))
@@ -745,7 +743,7 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
             steps.push_back(std::move(step));
     for (NextStep& step : repair_timed_out_next_steps({4, 7}))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 49);
+    REQUIRE(steps.size() == 51);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

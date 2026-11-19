@@ -355,3 +355,40 @@ TEST_CASE("turning a host into anything but a part leaves its painted modifiers 
     CHECK(painted_modifiers_orphaned_by_type_change(*scene.object, scene.host_id(), ModelVolumeType::MODEL_PART).empty());
     CHECK(painted_modifiers_orphaned_by_type_change(*scene.object, scene.second_id(), ModelVolumeType::PARAMETER_MODIFIER).empty());
 }
+
+// ---- Task 4: paint_object's painted_modifier arguments ----
+
+TEST_CASE("paint_object without a selection is refused, except a painted modifier's depth alone", "[McpPaint][orcamcp]")
+{
+    const auto color = missing_selection_refusal(PaintChannel(PaintMode::Color), false, false);
+    REQUIRE(color.has_value());
+    CHECK(mentions(*color, "bands, box, sphere, all, visible, connected, component or state"));
+    CHECK(missing_selection_refusal(PaintChannel(PaintMode::Support), false, true).has_value()); // depth belongs to one mode
+    CHECK(missing_selection_refusal(PaintChannel(PaintMode::PaintedModifier), false, true) == std::nullopt);
+    const auto neither = missing_selection_refusal(PaintChannel(PaintMode::PaintedModifier), false, false);
+    REQUIRE(neither.has_value());
+    CHECK(mentions(*neither, "depth_mm"));
+    CHECK(missing_selection_refusal(PaintChannel(PaintMode::Color), true, false) == std::nullopt);
+}
+
+TEST_CASE("depth_mm belongs to mode painted_modifier and its range", "[McpPaint][orcamcp]")
+{
+    const auto on_support = depth_argument_refusal(PaintChannel(PaintMode::Support), {{"depth_mm", 3}});
+    REQUIRE(on_support.has_value());
+    CHECK(mentions(*on_support, "mode painted_modifier"));
+    const auto negative = depth_argument_refusal(PaintChannel(PaintMode::PaintedModifier), {{"depth_mm", -1}});
+    REQUIRE(negative.has_value());
+    CHECK(mentions(*negative, "0 to 1000"));
+    CHECK(depth_argument_refusal(PaintChannel(PaintMode::PaintedModifier), {{"depth_mm", 3}}) == std::nullopt);
+    CHECK(depth_argument_refusal(PaintChannel(PaintMode::Color), json::object()) == std::nullopt);
+}
+
+TEST_CASE("a connected seed on the host's facet is taken as the painted modifier's", "[McpPaint][orcamcp]")
+{
+    const Scene         scene;
+    const PaintChannel  pm_channel(PaintMode::PaintedModifier);
+    // pick_facet names the part the ray hit: the host. Same mesh, same facet numbers.
+    CHECK(seed_volume_for_mode(*scene.object, pm_channel, scene.pm_id(), scene.host_id()) == scene.pm_id());
+    CHECK(seed_volume_for_mode(*scene.object, pm_channel, scene.pm_id(), scene.second_id()) == scene.second_id());
+    CHECK(seed_volume_for_mode(*scene.object, PaintChannel(PaintMode::Color), scene.pm_id(), scene.host_id()) == scene.host_id());
+}

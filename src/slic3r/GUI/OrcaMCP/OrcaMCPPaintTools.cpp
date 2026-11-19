@@ -2,6 +2,7 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPPaintModel.hpp"
+#include "OrcaMCPPaintedModifier.hpp"
 #include "OrcaMCPPaintSelect.hpp"
 #include "OrcaMCPFilamentModel.hpp"
 #include "OrcaMCPNextSteps.hpp"
@@ -95,10 +96,34 @@ struct PaintTargetNeeds
 // A tool that writes paint validates through here first and only then takes its undo snapshot
 // (the set_object_printable / set_object_filament shape), and follows the write with
 // refresh_after_paint below, which carries the GUI bookkeeping every such write owes.
+// mode painted_modifier: exactly the painted modifier volume_id names, painted over its own mesh and frame, which
+// are its host's once synced (the app syncs before every slice and save; a host repaired or reloaded since would
+// otherwise leave the paint on facets the host no longer has).
+bool resolve_painted_modifier_target(const nlohmann::json& params, PaintTarget& out, std::string& error)
+{
+    ensure_painted_modifiers_synced(*out.object);
+    std::optional<int> volume_id;
+    if (params.contains("volume_id")) {
+        int id = -1;
+        if (!parse_integer_field(params, "volume_id", -1, id, error))
+            return false;
+        if (id != -1) // -1 means every part, which names no painted modifier
+            volume_id = id;
+    }
+    if (const auto refusal = painted_modifier_target_refusal(out.object_id, *out.object, volume_id)) {
+        error = *refusal;
+        return false;
+    }
+    out.volumes.push_back(out.object->volumes[std::size_t(*volume_id)]);
+    out.volume_ids.push_back(*volume_id);
+    return true;
+}
+
 bool resolve_paint_target(const nlohmann::json&  params,
                           PaintTarget&           out,
                           std::string&           error,
-                          const PaintTargetNeeds needs = {})
+                          const PaintTargetNeeds needs   = {},
+                          const PaintChannel&    channel = PaintMode::Color)
 {
     // The app's own Repair lets calls through its dialog while it works out the repair, and gives the
     // painting it captured to the repaired parts; paint written meanwhile is remapped in place, but a
@@ -127,6 +152,8 @@ bool resolve_paint_target(const nlohmann::json&  params,
 
     if (!needs.volumes)
         return true;
+    if (channel.mode == PaintMode::PaintedModifier)
+        return resolve_painted_modifier_target(params, out, error);
 
     int volume_id = -1;
     if (!parse_integer_field(params, "volume_id", -1, volume_id, error))
@@ -344,6 +371,78 @@ void refresh_after_paint(const PaintTarget& target)
     if (canvas && canvas->is_initialized())
         canvas->post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
     plater->update();
+}
+
+// What a painted-modifier paint call adds to its answer: the modifier, its host, its depth, how much of the host's
+// surface it claims (from `painted`, the paint as written, read off the main thread where the call has it), and the
+// steps that make a modifier painted nowhere, or with no settings of its own, change something. Nothing for the
+// other modes. Called after any other next steps, which it replaces (none apply to this mode).
+void add_painted_modifier_answer(nlohmann::json& result, const PaintTarget& target, const PaintChannel& channel,
+                                 const std::vector<PaintedStateInfo>& painted)
+{
+    if (channel.mode != PaintMode::PaintedModifier || target.volumes.empty())
+        return;
+    const Slic3r::ModelVolume& painted_modifier = *target.volumes.front();
+    const int                  volume_id        = target.volume_ids.front();
+    const nlohmann::json       coverage         = painted_modifier_coverage_json(painted);
+    result["volume_id"]      = volume_id;
+    result["host_volume_id"] = host_volume_id(*target.object, painted_modifier);
+    result["depth_mm"]       = painted_modifier.painted_modifier_depth;
+    result.update(coverage);
+    add_next_steps(result, painted_modifier_paint_next_steps(target.object_id, volume_id, coverage["painted_facets"].get<int>() > 0,
+                                                             !painted_modifier.config.empty()));
+}
+
+// paint_object with mode painted_modifier and depth_mm but no selection: the gizmo's Depth field. One main-thread
+// hop; an undo step, named as the gizmo names it, only when the depth changes.
+nlohmann::json set_painted_modifier_depth(const nlohmann::json& params, const PaintChannel& channel)
+{
+    Plater*     plater = wxGetApp().plater();
+    PaintTarget target;
+    std::string error;
+    if (!resolve_paint_target(params, target, error, {}, channel))
+        return error_response(error);
+    std::optional<float> depth;
+    if (const auto refusal = read_depth_mm(params, depth); refusal || !depth)
+        return error_response(refusal ? *refusal : "depth_mm is required here");
+    Slic3r::ModelVolume* painted_modifier = target.volumes.front();
+    const bool           changed          = *depth != painted_modifier->painted_modifier_depth;
+    std::string          closed_tool;
+    if (changed) {
+        // An open paint panel is closed as the user closes it, right before the change and only for one.
+        if (const auto failed = close_toolbar_tool_for_change(*plater, target.object_id, target.object->volumes.size(), closed_tool))
+            return *failed;
+        plater->take_snapshot(_u8L("Change painted modifier depth"));
+        painted_modifier->painted_modifier_depth = *depth;
+        refresh_after_paint(target);
+    }
+    nlohmann::json result = {{"status", "success"},
+                             {"object_id", target.object_id},
+                             {"object_name", target.object->name},
+                             {"mode", paint_mode_name(channel.mode)},
+                             {"depth_changed", changed},
+                             {"annotation_changed", false},
+                             {"active_warnings", get_active_warnings_json(plater)}};
+    add_painted_modifier_answer(result, target, channel, read_volume_paint(*painted_modifier, PaintMode::PaintedModifier));
+    if (painted_modifier->painted_modifier_facets.empty())
+        result["info_messages"] = {"The depth changes nothing until the modifier is painted: paint_object with a selection paints it"};
+    return with_closed_tool(std::move(result), closed_tool);
+}
+
+// paint_object without a selection: refused for every mode but a painted modifier's depth alone.
+nlohmann::json paint_without_selection(const nlohmann::json& params)
+{
+    return run_on_main_thread([&params]() -> nlohmann::json {
+        PaintChannel channel = PaintMode::Color;
+        std::string  error;
+        if (!parse_paint_channel(params, channel, error))
+            return error_response(error);
+        if (const auto refusal = depth_argument_refusal(channel, params))
+            return error_response(*refusal);
+        if (const auto refusal = missing_selection_refusal(channel, false, params.contains("depth_mm")))
+            return error_response(*refusal);
+        return set_painted_modifier_depth(params, channel);
+    });
 }
 
 // How many filament slots the project has: the bound every colour write is checked against. GUI
@@ -882,7 +981,7 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
     nlohmann::json gate = run_on_main_thread([&params, &request, &needs, &plan, &base]() -> nlohmann::json {
         PaintTarget target;
         std::string error;
-        if (!resolve_paint_target(params, target, error, needs))
+        if (!resolve_paint_target(params, target, error, needs, request.channel))
             return error_response(error);
         if (const std::string refusal = state_mapping_error(request.channel.mode, request.mapping, filament_slot_count()); !refusal.empty())
             return error_response(refusal);
@@ -912,7 +1011,7 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
         std::string error;
         // Coordinate-free: a move since the first hop changes nothing it computed, so only the volumes,
         // their meshes and their paint must be the same.
-        if (!resolve_paint_target(params, target, error, needs) || !plan_meshes_unchanged(target, plan, error))
+        if (!resolve_paint_target(params, target, error, needs, request.channel) || !plan_meshes_unchanged(target, plan, error))
             return error_response(error);
         // Built on the paint each volume carried in the first hop: a gizmo stroke landing since would
         // be discarded by writing it, so every volume is checked before anything is written.
@@ -965,6 +1064,8 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
             result["info_messages"] = messages;
         add_next_steps(result, paint_prerequisite_steps(*target.object, target.object_id, request.channel.mode));
         add_texture_answer(result, target, request.channel);
+        add_painted_modifier_answer(result, target, request.channel,
+                                    writes.empty() ? std::vector<PaintedStateInfo>{} : writes.front().after);
         return with_closed_tool(std::move(result), closed_tool);
     });
 }
@@ -979,6 +1080,11 @@ nlohmann::json paint_by_state(const nlohmann::json& params)
     if (!parse_paint_channel(params, channel, error))
         return error_response(error);
     const PaintMode mode = channel.mode;
+    if (const auto refusal = depth_argument_refusal(channel, params))
+        return error_response(*refusal);
+    if (params.contains("depth_mm"))
+        return error_response("selection 'state' repaints by state and changes nothing else: send depth_mm in a call of its own "
+                              "(mode painted_modifier, volume_id, depth_mm, no selection)");
     bool replace = false;
     if (params.contains("replace") && (!parse_boolean_param(params["replace"], replace) || replace))
         return error_response("selection 'state' repaints only the facets in that state and keeps the rest, so replace "
@@ -1003,7 +1109,11 @@ void OrcaMCPServer::register_paint_tools()
         "the paint gizmos write. To put a whole object or volume on one filament, use set_object_filament. "
         "mode selects which: color (multi-material / MMU segmentation), support, seam, "
         "fuzzy_skin or texture. texture paints where one texture displacement layer applies "
-        "(texture_layer: the layer's slot; state painted or none). selection selects where: bands along a "
+        "(texture_layer: the layer's slot; state painted or none). painted_modifier paints where a painted modifier "
+        "applies its own settings on its part (volume_id: the painted modifier, from add_volume type painted_modifier; "
+        "state painted or none; a connected seed from pick_facet on its part is taken as its own); depth_mm sets how far "
+        "it reaches into the part, with a selection or alone (no selection: only the depth changes). "
+        "selection selects where: bands along a "
         "plate axis (an even split across a "
         "list of filaments, or explicit ranges), a box, a sphere, the whole volume, or visible: the facets "
         "seen from `view` (front-facing and not hidden by the object's other facets), as the texture panel's "
@@ -1041,7 +1151,8 @@ void OrcaMCPServer::register_paint_tools()
                 {"volume_id", {
                     {"type", "integer"},
                     {"minimum", -1},
-                    {"description", "Part index within the object (0-based); omit, or pass -1, for every part"}
+                    {"description", "Part index within the object (0-based); omit, or pass -1, for every part. Mode "
+                                    "painted_modifier: the painted modifier, required"}
                 }},
                 {"instance_id", {
                     {"type", "integer"},
@@ -1050,7 +1161,7 @@ void OrcaMCPServer::register_paint_tools()
                 }},
                 {"mode", {
                     {"type", "string"},
-                    {"enum", {"color", "support", "seam", "fuzzy_skin", "texture"}},
+                    {"enum", {"color", "support", "seam", "fuzzy_skin", "texture", "painted_modifier"}},
                     {"description", "Which annotation to write (default: color)"}
                 }},
                 {"texture_layer", {
@@ -1174,7 +1285,14 @@ void OrcaMCPServer::register_paint_tools()
                     {"description", "State for selection=box/sphere/all/visible/connected/component/state when mode "
                                     "is not color. "
                                     "fuzzy_skin accepts none and enforcer (spelled either "
-                                    "'enforcer' or 'fuzzy_skin'), never blocker; texture accepts none and painted."}
+                                    "'enforcer' or 'fuzzy_skin'), never blocker; texture and painted_modifier accept none and painted."}
+                }},
+                {"depth_mm", {
+                    {"type", "number"},
+                    {"minimum", 0},
+                    {"maximum", 1000},
+                    {"description", "mode painted_modifier only: how far into the part the painted area reaches, mm; 0 = "
+                                    "through the part to the nearest unpainted surface. With a selection or alone"}
                 }},
                 {"replace", {
                     {"type", "boolean"},
@@ -1183,11 +1301,13 @@ void OrcaMCPServer::register_paint_tools()
                                     "omit it there, or pass false"}
                 }}
             }},
-            {"required", {"object_id", "selection"}}
+            // selection is refused by the handler when missing, except a painted modifier's depth alone.
+            {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            if (params.contains("selection") && params["selection"].is_string() &&
-                params["selection"].get<std::string>() == "state")
+            if (!params.contains("selection"))
+                return paint_without_selection(params);
+            if (params["selection"].is_string() && params["selection"].get<std::string>() == "state")
                 return paint_by_state(params);
             // Three hops, because painting a multi-million-facet mesh takes minutes and the GUI
             // thread is the only one every other tool also needs. Only the validation and the
@@ -1213,18 +1333,23 @@ void OrcaMCPServer::register_paint_tools()
                                                           &paint_base]() -> nlohmann::json {
                     PaintTarget target;
                     std::string error;
-                    if (!resolve_paint_target(params, target, error))
-                        return nlohmann::json{{"status", "error"}, {"message", error}};
-
+                    // The channel first: it decides which volumes the call addresses (a painted modifier, or parts).
                     // is_string first: get<std::string>() on a number throws nlohmann's
                     // type_error.302, which the dispatcher forwards verbatim in place of the
                     // message below. Same leniency the scalar parameters already get in this file.
                     if (!parse_paint_channel(params, channel, error))
                         return nlohmann::json{{"status", "error"}, {"message", error}};
                     mode = channel.mode;
+                    if (const auto refusal = depth_argument_refusal(channel, params))
+                        return error_response(*refusal);
+                    if (!resolve_paint_target(params, target, error, {}, channel))
+                        return nlohmann::json{{"status", "error"}, {"message", error}};
 
                     if (!parse_paint_request(params, mode, target, request, error))
                         return nlohmann::json{{"status", "error"}, {"message", error}};
+                    // pick_facet names the host a ray hit; a painted modifier shares its mesh and facet numbers.
+                    if (request.selection == "connected" && !request.seed_by_point && mode == PaintMode::PaintedModifier)
+                        request.seed_volume_id = seed_volume_for_mode(*target.object, channel, target.volume_ids.front(), request.seed_volume_id);
                     if (request.selection == "connected" && !request.seed_by_point && !seed_in_scope(request, target, error))
                         return nlohmann::json{{"status", "error"}, {"message", error}};
                     if (request.selection == "visible" && !capture_visible_view(params, target, request, error))
@@ -1430,7 +1555,7 @@ void OrcaMCPServer::register_paint_tools()
                 // Re-resolved rather than remembered: the pointers hop 1 held could have been
                 // freed while hop 2 ran. plan_still_valid then proves the freshly resolved scene
                 // is the one the states were computed against.
-                if (!resolve_paint_target(params, target, error) || !plan_still_valid(target, plan, error))
+                if (!resolve_paint_target(params, target, error, {}, channel) || !plan_still_valid(target, plan, error))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
                 // What hid a facet is part of the scene the states were computed from.
                 if (request.selection == "visible" && !plan_still_valid(all_model_parts(target), request.occluders, error))
@@ -1465,7 +1590,12 @@ void OrcaMCPServer::register_paint_tools()
                 for (std::size_t i = 0; i < plan.volumes.size(); ++i)
                     write_changes[i] = !paint_base_unchanged(*target.volumes[std::size_t(plan.volumes[i].index)], channel,
                                                              writes[i].data);
-                if (std::find(write_changes.begin(), write_changes.end(), true) != write_changes.end()) {
+                // A painted modifier's depth given with the selection is written under the same undo step.
+                std::optional<float> depth;
+                if (mode == PaintMode::PaintedModifier)
+                    read_depth_mm(params, depth); // refused in hop 1 when out of range
+                const bool depth_changes = depth && *depth != target.volumes.front()->painted_modifier_depth;
+                if (depth_changes || std::find(write_changes.begin(), write_changes.end(), true) != write_changes.end()) {
                     // An open paint panel is closed, as the user closes it, right before the change and only for a
                     // change: closing takes its own undo step, which a refused call or a repaint of what is there
                     // must not leave behind. Nothing below can refuse, so the closed tool is told in the answer.
@@ -1499,7 +1629,9 @@ void OrcaMCPServer::register_paint_tools()
                         changed |= apply_paint_data(*mv, channel, std::move(writes[i].data));
                 }
 
-                if (changed)
+                if (depth_changes)
+                    target.volumes.front()->painted_modifier_depth = *depth;
+                if (changed || depth_changes)
                     mode == PaintMode::Texture ? refresh_after_texture_paint(target) : refresh_after_paint(target);
 
                 // The same per-volume shape get_object_paint and clear_object_paint report
@@ -1630,6 +1762,10 @@ void OrcaMCPServer::register_paint_tools()
                     result["info_messages"] = messages;
                 add_next_steps(result, paint_prerequisite_steps(*target.object, target.object_id, mode));
                 add_texture_answer(result, target, channel);
+                if (mode == PaintMode::PaintedModifier) {
+                    result["depth_changed"] = depth_changes;
+                    add_painted_modifier_answer(result, target, channel, writes.front().painted);
+                }
 
                 return with_closed_tool(std::move(result), closed_tool);
             });

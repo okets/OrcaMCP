@@ -2149,7 +2149,7 @@
     },
     {
       "category": "Painting",
-      "description": "Paint an object's surface as the GUI's paint tools do: filament colours for a multi-colour print, support enforcers and blockers, the seam, or fuzzy skin -- per-triangle data, the same the paint gizmos write. To put a whole object or volume on one filament, use set_object_filament. mode selects which: color (multi-material / MMU segmentation), support, seam, fuzzy_skin or texture. texture paints where one texture displacement layer applies (texture_layer: the layer's slot; state painted or none). selection selects where: bands along a plate axis (an even split across a list of filaments, or explicit ranges), a box, a sphere, the whole volume, or visible: the facets seen from `view` (front-facing and not hidden by the object's other facets), as the texture panel's Project only on visible does, in any mode; only the target instance's own model parts can hide a facet (other instances and objects never do), and view direction current is the 3D view's camera, the default one before the canvas has been drawn. connected fills the surface region around a seed without crossing an edge sharper than `angle` -- the way to paint a feature such as a bag or a sleeve; component paints one shell by id; state repaints every facet now in one state (match_filament, or match_state outside colour mode) with filament / state and leaves the rest, e.g. everything painted with filament 1 becomes filament 3 (remap_paint renumbers several at once). Very large meshes (millions of facets) take seconds to minutes; the work runs off the GUI thread, but the bridge's ORCAMCP_TIMEOUT (default 120 s) may still need raising. ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its bounding_box and position in, not object-local coordinates. But for the numbers, use THIS call's own bounding_box in the response (or get_object_paint's), not get_object_info's: that one spans every instance of the object, and matches this tool's, which is instance_id's alone, only when the object has one instance. A facet belongs to the band or region containing its centroid. Paint lives on the volume, so it applies to every instance; instance_id only says whose transform reads your coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint. Painted support enforcers do nothing while enable_support is off: next_steps then names the set_object_config call that turns it on with a (manual) support_type, for support only where painted. A paint panel open in the app is closed first, as the user would close it (closed_toolbar_tool), since it would write its own copy of the paint over this one. Texture paint changes the mask only: nothing reaches the print until the layers are baked into the mesh.",
+      "description": "Paint an object's surface as the GUI's paint tools do: filament colours for a multi-colour print, support enforcers and blockers, the seam, or fuzzy skin -- per-triangle data, the same the paint gizmos write. To put a whole object or volume on one filament, use set_object_filament. mode selects which: color (multi-material / MMU segmentation), support, seam, fuzzy_skin or texture. texture paints where one texture displacement layer applies (texture_layer: the layer's slot; state painted or none). painted_modifier paints where a painted modifier applies its own settings on its part (volume_id: the painted modifier, from add_volume type painted_modifier; state painted or none; a connected seed from pick_facet on its part is taken as its own); depth_mm sets how far it reaches into the part, with a selection or alone (no selection: only the depth changes). selection selects where: bands along a plate axis (an even split across a list of filaments, or explicit ranges), a box, a sphere, the whole volume, or visible: the facets seen from `view` (front-facing and not hidden by the object's other facets), as the texture panel's Project only on visible does, in any mode; only the target instance's own model parts can hide a facet (other instances and objects never do), and view direction current is the 3D view's camera, the default one before the canvas has been drawn. connected fills the surface region around a seed without crossing an edge sharper than `angle` -- the way to paint a feature such as a bag or a sleeve; component paints one shell by id; state repaints every facet now in one state (match_filament, or match_state outside colour mode) with filament / state and leaves the rest, e.g. everything painted with filament 1 becomes filament 3 (remap_paint renumbers several at once). Very large meshes (millions of facets) take seconds to minutes; the work runs off the GUI thread, but the bridge's ORCAMCP_TIMEOUT (default 120 s) may still need raising. ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its bounding_box and position in, not object-local coordinates. But for the numbers, use THIS call's own bounding_box in the response (or get_object_paint's), not get_object_info's: that one spans every instance of the object, and matches this tool's, which is instance_id's alone, only when the object has one instance. A facet belongs to the band or region containing its centroid. Paint lives on the volume, so it applies to every instance; instance_id only says whose transform reads your coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint. Painted support enforcers do nothing while enable_support is off: next_steps then names the set_object_config call that turns it on with a (manual) support_type, for support only where painted. A paint panel open in the app is closed first, as the user would close it (closed_toolbar_tool), since it would write its own copy of the paint over this one. Texture paint changes the mask only: nothing reaches the print until the layers are baked into the mesh.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2218,6 +2218,12 @@
             "minimum": 0,
             "type": "integer"
           },
+          "depth_mm": {
+            "description": "mode painted_modifier only: how far into the part the painted area reaches, mm; 0 = through the part to the nearest unpainted surface. With a selection or alone",
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "number"
+          },
           "filament": {
             "description": "1-based filament slot for selection=box/sphere/all/connected/component/state (mode=color). 0 means unpainted.",
             "type": "integer"
@@ -2261,7 +2267,8 @@
               "support",
               "seam",
               "fuzzy_skin",
-              "texture"
+              "texture",
+              "painted_modifier"
             ],
             "type": "string"
           },
@@ -2309,7 +2316,7 @@
             "type": "object"
           },
           "state": {
-            "description": "State for selection=box/sphere/all/visible/connected/component/state when mode is not color. fuzzy_skin accepts none and enforcer (spelled either 'enforcer' or 'fuzzy_skin'), never blocker; texture accepts none and painted.",
+            "description": "State for selection=box/sphere/all/visible/connected/component/state when mode is not color. fuzzy_skin accepts none and enforcer (spelled either 'enforcer' or 'fuzzy_skin'), never blocker; texture and painted_modifier accept none and painted.",
             "enum": [
               "none",
               "enforcer",
@@ -2364,14 +2371,13 @@
             "type": "object"
           },
           "volume_id": {
-            "description": "Part index within the object (0-based); omit, or pass -1, for every part",
+            "description": "Part index within the object (0-based); omit, or pass -1, for every part. Mode painted_modifier: the painted modifier, required",
             "minimum": -1,
             "type": "integer"
           }
         },
         "required": [
-          "object_id",
-          "selection"
+          "object_id"
         ],
         "type": "object"
       },

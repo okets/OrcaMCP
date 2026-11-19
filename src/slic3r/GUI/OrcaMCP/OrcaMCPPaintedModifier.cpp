@@ -179,9 +179,14 @@ nlohmann::json painted_modifier_row_fields(const ModelObject& object, std::size_
 
 nlohmann::json painted_modifier_coverage_json(const ModelVolume& painted_modifier)
 {
+    return painted_modifier_coverage_json(read_volume_paint(painted_modifier, PaintMode::PaintedModifier));
+}
+
+nlohmann::json painted_modifier_coverage_json(const std::vector<PaintedStateInfo>& painted)
+{
     int    painted_facets   = 0;
     double coverage_percent = 0.;
-    for (const PaintedStateInfo& info : read_volume_paint(painted_modifier, PaintMode::PaintedModifier))
+    for (const PaintedStateInfo& info : painted)
         if (info.state == int(EnforcerBlockerType::ENFORCER)) {
             painted_facets   = info.facet_count;
             coverage_percent = info.area_ratio * 100.;
@@ -205,6 +210,33 @@ std::vector<int> painted_modifiers_orphaned_by_type_change(const ModelObject& ob
             ids.push_back(int(i));
     }
     return ids;
+}
+
+std::optional<std::string> missing_selection_refusal(const PaintChannel& channel, bool has_selection, bool has_depth)
+{
+    if (has_selection || (has_depth && channel.mode == PaintMode::PaintedModifier))
+        return std::nullopt;
+    std::string message = "selection is required: bands, box, sphere, all, visible, connected, component or state";
+    if (channel.mode == PaintMode::PaintedModifier)
+        message += " (or depth_mm alone, to change only the painted modifier's depth)";
+    return message;
+}
+
+std::optional<std::string> depth_argument_refusal(const PaintChannel& channel, const nlohmann::json& params)
+{
+    if (!params.contains("depth_mm"))
+        return std::nullopt;
+    if (channel.mode != PaintMode::PaintedModifier)
+        return std::string("depth_mm belongs to mode painted_modifier: it is how far a painted modifier reaches into its part");
+    std::optional<float> depth;
+    return read_depth_mm(params, depth);
+}
+
+int seed_volume_for_mode(const ModelObject& object, const PaintChannel& channel, int painted_modifier_id, int seed_volume_id)
+{
+    if (channel.mode != PaintMode::PaintedModifier || painted_modifier_id < 0 || std::size_t(painted_modifier_id) >= object.volumes.size())
+        return seed_volume_id;
+    return host_volume_id(object, *object.volumes[std::size_t(painted_modifier_id)]) == seed_volume_id ? painted_modifier_id : seed_volume_id;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
