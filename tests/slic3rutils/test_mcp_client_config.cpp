@@ -1529,3 +1529,94 @@ TEST_CASE("every Codex config in the corpus is edited into valid TOML or left by
         CHECK(read_file(codex.config_path) == broken); // byte for byte, through all three refusals
     }
 }
+
+TEST_CASE("Connect names the form it cannot edit", "[McpClientConfig]")
+{
+    const auto command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+
+    // mcp_servers itself inline, or a value: no table of ours can stand beside it.
+    for (const char* before : {"mcp_servers = {}\n", "mcp_servers = { other = { command = \"x\" } }\n", "mcp_servers = 5\n"}) {
+        ScopedTemporaryDir dir("orcamcp-inline-servers");
+        const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+        write(codex.config_path, before);
+        INFO(before);
+        std::string error;
+        CHECK_FALSE(MCPClientConfig::write_client_entry(codex, command, error));
+        CHECK(error.find("defines mcp_servers as an inline table or a single value") != std::string::npos);
+        CHECK(read_file(codex.config_path) == before);
+    }
+
+    // Subtables of ours with no main table: Connect names them; Disconnect takes them out.
+    ScopedTemporaryDir  dir("orcamcp-subtables-only");
+    const MCPClientInfo codex  = codex_client(dir.path(), "config.toml");
+    const std::string   before = "keep = 1\n\n[mcp_servers.\"orca-slicer\".\"env\"]\nX = \"1\"\n";
+    write(codex.config_path, before);
+    std::string error;
+    CHECK_FALSE(MCPClientConfig::write_client_entry(codex, command, error));
+    CHECK(error.find("tables but no [mcp_servers.orca-slicer] table") != std::string::npos);
+    CHECK(read_file(codex.config_path) == before);
+    REQUIRE(MCPClientConfig::remove_from_toml_config(codex.config_path, error));
+    CHECK(read_file(codex.config_path) == "keep = 1\n");
+}
+
+TEST_CASE("a CRLF Codex config gets CRLF lines", "[McpClientConfig]")
+{
+    const auto command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    for (const char* before : {"keep = 1\r\n",
+                               "keep = 1\r\n[mcp_servers.orca-slicer]\r\ncommand = \"python3\"\r\nargs = [\"/h/.orcamcp/orcamcp-bridge.py\"]\r\n"}) {
+        ScopedTemporaryDir dir("orcamcp-crlf");
+        const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+        write(codex.config_path, before);
+        INFO(before);
+        std::string error;
+        REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+        const std::string after = read_file(codex.config_path);
+        CHECK(count_of(after, "\n") == count_of(after, "\r\n")); // every line ends CRLF
+        CHECK(after.find("command = \"/opt/orcamcp/python\"\r\n") != std::string::npos);
+        CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Current);
+    }
+}
+
+TEST_CASE("timeouts of another type or sign, and tab-indented statements", "[McpClientConfig]")
+{
+    const auto command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    ScopedTemporaryDir  dir("orcamcp-timeout-kinds");
+    const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+    write(codex.config_path, "[mcp_servers.orca-slicer]\n"
+                             "\tcommand = \"python3\"\n"
+                             "\targs = [\"/h/.orcamcp/orcamcp-bridge.py\"]\n"
+                             "\tstartup_timeout_sec = true\n"
+                             "\ttool_timeout_sec = -5\n");
+    std::string error;
+    REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+    const std::string after = read_file(codex.config_path);
+    // A boolean is the user's value of another type: kept as written, ours not added. A negative integer is below
+    // the minimum: raised. The tab-indented command and args went whole.
+    CHECK(after.find("\tstartup_timeout_sec = true\n") != std::string::npos);
+    CHECK(after.find("startup_timeout_sec = 20") == std::string::npos);
+    CHECK(after.find("-5") == std::string::npos);
+    CHECK(after.find("tool_timeout_sec = 140\n") != std::string::npos);
+    CHECK(after.find("python3") == std::string::npos);
+
+    // A hex integer is an integer: 0x400 (1024) already gives the bridge its minimum and stays as written.
+    write(codex.config_path, "[mcp_servers.orca-slicer]\ntool_timeout_sec = 0x400\n");
+    REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+    CHECK(read_file(codex.config_path).find("tool_timeout_sec = 0x400\n") != std::string::npos);
+    CHECK(read_file(codex.config_path).find("tool_timeout_sec = 140") == std::string::npos);
+}
+
+TEST_CASE("Connect then Disconnect gives the user's file back", "[McpClientConfig]")
+{
+    const auto command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    for (const char* before : {"# mine\n[other]\nk = 1 # one\n\n[mcp_servers.a]\ncommand = \"a\"\n",
+                               "keep = 1\r\n[t]\r\nx = \"\"\"\r\n[mcp_servers.orca-slicer]\r\n\"\"\"\r\n"}) {
+        ScopedTemporaryDir dir("orcamcp-round-trip");
+        const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+        write(codex.config_path, before);
+        INFO(before);
+        std::string error;
+        REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+        REQUIRE(MCPClientConfig::remove_from_toml_config(codex.config_path, error));
+        CHECK(read_file(codex.config_path) == before);
+    }
+}

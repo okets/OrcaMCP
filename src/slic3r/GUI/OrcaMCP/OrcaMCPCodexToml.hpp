@@ -31,6 +31,9 @@ struct CodexServerRead
 {
     std::string              parse_error;   // Not empty: the text is not TOML, so Codex cannot read it either
     bool                     named = false; // mcp_servers.<name> is defined, in any form
+    bool                     servers_inline = false; // mcp_servers is an inline table or a plain value, so no
+                                                     // [mcp_servers.<name>] table can stand beside it
+    bool                     array_form = false;    // a [[mcp_servers.<name>]] header defines it: never ours to remove
     std::optional<TomlSpan>  table;         // Its [mcp_servers.<name>] header line up to the next header line
     std::vector<TomlSpan>    regions;       // That one and every region under an [mcp_servers.<name>.*] or
                                             // [[mcp_servers.<name>...]] header, in file order
@@ -53,7 +56,8 @@ struct CodexTimeouts
 // `command_lines` written right after the header line. A timeout the main table sets to an integer below
 // its minimum is removed and the minimum written after the command lines; an absent one is written there
 // too; an integer at least the minimum, or a value of another type (600.0, "30"), stays exactly as written.
-// Every other byte stays as it is. nullopt when the text is not TOML or does not begin with that header.
+// Every other byte stays as it is; the lines written end as the header line does (CRLF or LF). nullopt when the
+// text is not TOML or does not begin with that header.
 std::optional<std::string> update_codex_table(const std::string& table_text, const std::string& server_name,
                                               const std::string& command_lines, const CodexTimeouts& minimum);
 

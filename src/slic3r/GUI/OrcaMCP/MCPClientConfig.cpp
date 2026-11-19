@@ -298,6 +298,23 @@ std::string toml_undefined_form_error(const std::string& path, const std::string
            "or remove it, then press Connect again.";
 }
 
+// What Connect says when mcp_servers is itself an inline table or a value: no [mcp_servers.orca-slicer] table can
+// be added beside it, and rewriting the user's servers is not Connect's to do.
+std::string toml_inline_servers_error(const std::string& path, const std::string& server_name)
+{
+    return "Codex's config " + path + " defines mcp_servers as an inline table or a single value, which OrcaMCP cannot "
+           "edit to add a [mcp_servers." + server_name + "] table: write each server as its own [mcp_servers.<name>] "
+           "table, then press Connect again.";
+}
+
+// What Connect says when only subtables of ours stand, [mcp_servers.orca-slicer.env] with no
+// [mcp_servers.orca-slicer] table: a table added after them would define the server twice.
+std::string toml_subtables_only_error(const std::string& path, const std::string& server_name)
+{
+    return "Codex's config " + path + " has [mcp_servers." + server_name + ".*] tables but no [mcp_servers." +
+           server_name + "] table: add that table above them, or remove them, then press Connect again.";
+}
+
 // What Connect says when our own table is there but its text cannot be updated (the parser cannot read
 // the table on its own): the table is the user's to edit by hand; nothing else of the file is touched.
 std::string toml_undatable_table_error(const std::string& path, const std::string& server_name)
@@ -697,12 +714,19 @@ std::string MCPClientConfig::replace_toml_server_table(const std::string& conten
     if (span.first != std::string::npos)
         rest = content.substr(0, span.first) + content.substr(span.first + span.second);
 
+    // The file's own line endings: a CRLF file gets CRLF lines.
+    const size_t first_newline = content.find('\n');
+    const bool   crlf          = first_newline != std::string::npos && first_newline > 0 && content[first_newline - 1] == '\r';
+    const char*  newline       = crlf ? "\r\n" : "\n";
+    std::string  added         = table;
+    if (crlf)
+        boost::algorithm::replace_all(added, "\n", "\r\n");
     if (!rest.empty()) {
         if (rest.back() != '\n')
-            rest += '\n';
-        rest += '\n'; // one blank line before the new table
+            rest += newline;
+        rest += newline; // one blank line before the new table
     }
-    return rest + table;
+    return rest + added;
 }
 
 // `content` with our table's text replaced in place by `table`: the table keeps its position in the
@@ -777,8 +801,14 @@ bool MCPClientConfig::write_client_entry(const MCPClientInfo& info, const Bridge
                 error = toml_parse_error_message(info.config_path, read.parse_error);
                 return false;
             }
+            if (read.servers_inline) {
+                error = toml_inline_servers_error(info.config_path, SERVER_NAME);
+                return false;
+            }
             if (read.named && !read.table) {
-                error = toml_undefined_form_error(info.config_path, SERVER_NAME, "mcp_servers." + SERVER_NAME);
+                error = read.regions.empty() || read.array_form
+                            ? toml_undefined_form_error(info.config_path, SERVER_NAME, "mcp_servers." + SERVER_NAME)
+                            : toml_subtables_only_error(info.config_path, SERVER_NAME);
                 return false;
             }
             const std::string existing = toml_server_table_of(before);
@@ -1099,7 +1129,7 @@ bool MCPClientConfig::remove_from_toml_config(const std::string& path, std::stri
             error = SERVER_NAME + " not found in config";
             return false;
         }
-        if (!read.table) {
+        if (read.regions.empty() || read.array_form) { // named by no table of ours: nothing a removal can take out
             error = toml_undefined_form_error(path, SERVER_NAME, "mcp_servers." + SERVER_NAME);
             return false;
         }
@@ -1108,9 +1138,11 @@ bool MCPClientConfig::remove_from_toml_config(const std::string& path, std::stri
         for (auto region = read.regions.rbegin(); region != read.regions.rend(); ++region)
             new_content.erase(region->begin, region->end - region->begin);
 
-        // Trim trailing whitespace and add single newline.
+        // Trim trailing whitespace and end with one newline, the file's own (CRLF or LF).
+        const size_t first_newline = content.find('\n');
+        const bool   crlf = first_newline != std::string::npos && first_newline > 0 && content[first_newline - 1] == '\r';
         boost::algorithm::trim_right(new_content);
-        new_content += "\n";
+        new_content += crlf ? "\r\n" : "\n";
 
         const std::string difference = OrcaMCP::codex_disconnect_difference(content, new_content, SERVER_NAME);
         if (!difference.empty()) {

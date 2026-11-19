@@ -127,7 +127,9 @@ ReplaceDecision plan_replace(const ReplaceRequest& request, const std::vector<So
         if (!request.volume_id && replaceable.size() > 1)
             return refuse(object_words(object->object_id) + " has " + std::to_string(replaceable.size()) +
                           " parts and modifiers, and a file replaces one: pass its volume_id (get_object_info lists them)");
-        const int target = request.volume_id.value_or(replaceable.empty() ? 0 : replaceable.front());
+        if (replaceable.empty() && !request.volume_id)
+            return refuse(object_words(object->object_id) + " has no part a file can replace");
+        const int target = request.volume_id.value_or(replaceable.front());
         const SourceVolume& volume = object->volumes[std::size_t(target)];
         if (volume.painted_modifier)
             return refuse(painted_modifier_words(object->object_id, target, volume.painted_host, "it is never replaced on its own"));

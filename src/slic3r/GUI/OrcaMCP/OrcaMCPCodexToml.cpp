@@ -303,6 +303,10 @@ CodexServerRead read_codex_server(const std::string& content, const std::string&
     if (!root)
         return read;
 
+    const toml::node*  servers = (*root)[SERVERS_KEY].node();
+    const toml::table* servers_table = servers != nullptr ? servers->as_table() : nullptr;
+    read.servers_inline = servers != nullptr && (servers_table == nullptr || servers_table->is_inline());
+
     const toml::node* server = server_node(*root, server_name);
     read.named               = server != nullptr;
     if (server == nullptr)
@@ -320,6 +324,8 @@ CodexServerRead read_codex_server(const std::string& content, const std::string&
         const TomlSpan span{headers[i].offset, i + 1 < headers.size() ? headers[i + 1].offset : content.size()};
         if (is_server_table(headers[i], server_name))
             read.table = span;
+        else if (headers[i].path.size() == 2 && headers[i].array)
+            read.array_form = true;
         read.regions.push_back(span);
     }
     return read;
@@ -362,8 +368,12 @@ std::optional<std::string> update_codex_table(const std::string& table_text, con
     std::sort(removed.begin(), removed.end(), [](const TomlSpan& a, const TomlSpan& b) { return a.begin < b.begin; });
 
     std::string out = table_text.substr(0, body);
+    const bool  crlf = out.size() >= 2 && out.compare(out.size() - 2, 2, "\r\n") == 0;
     if (out.empty() || out.back() != '\n')
         out += '\n';
+    if (crlf) // the file's own line endings for the lines Connect writes
+        for (size_t pos = written.find('\n'); pos != std::string::npos; pos = written.find('\n', pos + 2))
+            written.insert(pos, 1, '\r');
     out += written;
     size_t pos = body;
     for (const TomlSpan& span : removed) {
