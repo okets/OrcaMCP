@@ -7,6 +7,7 @@
 #include "OrcaMCPInstanceEdits.hpp"
 #include "OrcaMCPMeshHealth.hpp"
 #include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPPaintedModifier.hpp"
 #include "OrcaMCPPartEdits.hpp"
 #include "OrcaMCPTextureDisplacement.hpp"
 #include "OrcaMCPPlateUtils.hpp"
@@ -962,6 +963,68 @@ void drop_modifier_tip(nlohmann::json& answer)
         answer.erase("info_messages");
 }
 
+// The words naming add_volume's type values, for the refusal of one that is none of them.
+std::string add_volume_type_words()
+{
+    std::string out;
+    for (const std::string& name : add_volume_type_names())
+        out += out.empty() ? name : ", " + name;
+    return out;
+}
+
+// ---- add_volume type painted_modifier ----
+
+// The object list's Add Painted Modifier: an empty painted modifier on a model part, sharing its mesh and
+// placement, under the menu's own undo step. The list adds it, re-sorts the volumes and updates the object;
+// a depth given is the gizmo's Depth field, which changes what the modifier prints over the host.
+nlohmann::json add_painted_modifier_on_main_thread(Plater& plater, int object_id, ModelObject& object, const nlohmann::json& params)
+{
+    const std::variant<PaintedModifierRequest, std::string> read = read_painted_modifier_request(object_id, object, params);
+    if (const std::string* refusal = std::get_if<std::string>(&read))
+        return error_response(*refusal);
+    const PaintedModifierRequest& request = std::get<PaintedModifierRequest>(read);
+
+    if (const auto refusal = ui_job_refusal(plater, "add_volume"))
+        return error_response(*refusal);
+
+    std::string closed_tool;
+    if (const auto refusal = close_toolbar_tool_before_change(plater, object_id, object.volumes.size(), closed_tool))
+        return *refusal;
+    const ModelVolume* host = object.volumes[std::size_t(request.host_volume_id)];
+    McpDialogSuppressionGuard guard;
+    ModelVolume* painted = nullptr;
+    {
+        Plater::TakeSnapshot snapshot(&plater, _u8L("Add painted modifier"));
+        painted = wxGetApp().obj_list()->add_painted_modifier(object_id, *host, nullptr);
+        if (painted != nullptr && request.depth_mm) {
+            painted->painted_modifier_depth = *request.depth_mm;
+            // The depth is what reaches into the print: the object must be sliced with it.
+            wxGetApp().obj_list()->changed_object(object_id);
+        }
+    }
+    // The list re-sorts the volumes (parts first), so the new volume's id is read from the scene, by pointer.
+    const int volume_id = painted == nullptr ? -1 : index_of(object, painted);
+    if (volume_id < 0)
+        return with_closed_tool(guard.fail_on_errors(error_response("The object list did not add a painted modifier to object " +
+                                                                    std::to_string(object_id))),
+                                closed_tool);
+    // What may print changed: the plates holding the object no longer have its result.
+    mark_object_plates_unsliced(plater.get_partplate_list(), object_id);
+
+    nlohmann::json answer = {{"status", "success"},
+                             {"object_id", object_id},
+                             {"volume", volume_row_json(object, std::size_t(volume_id))},
+                             {"volumes", volume_rows_json(object)},
+                             {"host_volume_id", request.host_volume_id},
+                             {"depth_mm", double(request.depth_mm.value_or(0.f))},
+                             {"painted_facets", 0}}; // the list adds it unpainted: paint_object paints it
+    report_placement(answer, object_id);
+    answer["active_warnings"] = get_active_warnings_json(&plater);
+    add_next_steps(answer, painted_modifier_paint_next_steps(object_id, volume_id, /*painted=*/false, /*has_settings=*/false));
+    answer = guard.report(std::move(answer));
+    return with_closed_tool(std::move(answer), closed_tool);
+}
+
 nlohmann::json add_volume_on_main_thread(const nlohmann::json& params)
 {
     Plater*      plater    = wxGetApp().plater();
@@ -970,10 +1033,15 @@ nlohmann::json add_volume_on_main_thread(const nlohmann::json& params)
     ModelObject* object = resolve_object_id(params, plater->model(), object_id, error);
     if (object == nullptr)
         return error_response(error);
-    const std::string                    type_name = string_arg(params, "type", error);
-    const std::optional<ModelVolumeType> type      = volume_type_from_name(type_name);
+    const std::string type_name = string_arg(params, "type", error);
+    // host_volume_id and depth_mm are type painted_modifier's alone, whatever the type is.
+    if (const auto refusal = painted_modifier_argument_refusal(type_name, params))
+        return error_response(*refusal);
+    if (type_name == "painted_modifier")
+        return add_painted_modifier_on_main_thread(*plater, object_id, *object, params);
+    const std::optional<ModelVolumeType> type = volume_type_from_name(type_name);
     if (!type)
-        return error_response("type must be one of: part, negative_volume, modifier, support_blocker, support_enforcer");
+        return error_response("type must be one of: " + add_volume_type_words());
     const std::optional<std::string> shape = error.empty() ? read_text(params, "shape", error) : std::nullopt;
     const std::optional<std::string> file  = error.empty() ? read_text(params, "file_path", error) : std::nullopt;
     if (!error.empty())
@@ -1127,6 +1195,12 @@ nlohmann::json set_volume_type_on_main_thread(const nlohmann::json& params)
     if (const auto refusal = close_toolbar_tool_before_change(*plater, object_id, object->volumes.size(), closed_tool))
         return *refusal;
     const TextureState texture_before = texture_state_of(*object); // after the panel closed
+    // A part that stops being a part leaves the painted modifiers painted on it without a host, and they then
+    // print nothing (PrintApply reads a painted modifier's region through the part it paints). Read them before
+    // the change, by pointer: the list re-sorts the volumes by type, so their ids move with it.
+    std::vector<const ModelVolume*> orphans;
+    for (const int painted : painted_modifiers_orphaned_by_type_change(*object, *volume_id, *to))
+        orphans.push_back(object->volumes[std::size_t(painted)]);
     if (const auto refusal = select_in_object_list(*plater, object_id, target))
         return with_closed_tool(error_response(*refusal), closed_tool);
     McpDialogSuppressionGuard guard;
@@ -1145,6 +1219,21 @@ nlohmann::json set_volume_type_on_main_thread(const nlohmann::json& params)
     add_next_steps(answer, new_volume_next_steps(object_id, now, type_name, false));
     answer = guard.report(std::move(answer));
     report_texture_changes(answer, plater->model(), texture_before, {object_id}, "the part's type changed");
+    // Tell of the modifiers this change left painted on nothing, under the ids they hold now: they print
+    // nothing until deleted, so the answer names the delete.
+    std::vector<int> orphaned_ids;
+    for (const ModelVolume* painted : orphans)
+        if (const int id = index_of(*object, painted); id >= 0)
+            orphaned_ids.push_back(id);
+    if (!orphaned_ids.empty()) {
+        answer["orphaned_painted_modifiers"] = orphaned_ids;
+        nlohmann::json& said = answer["info_messages"];
+        if (!said.is_array())
+            said = nlohmann::json::array();
+        said.push_back("painted modifiers " + listed_ids(orphaned_ids) +
+                       " print nothing now: the volume they were painted on is no longer a part");
+        append_next_steps(answer, orphaned_painted_modifier_next_steps(object_id, orphaned_ids));
+    }
     return with_closed_tool(std::move(answer), closed_tool);
 }
 
@@ -1436,17 +1525,25 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
         "from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the "
         "position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The "
         "answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar "
-        "tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
+        "tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs. type "
+        "painted_modifier adds an empty painted modifier on a model part (no shape, size or file): paint its area with "
+        "paint_object mode painted_modifier, give it settings with set_object_config volume_id.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {{"type", "integer"}, {"minimum", 0}, {"description", "Object index (0-based)"}}},
-                {"type", {{"type", "string"}, {"enum", volume_type_names()}, {"description", "What the volume is"}}},
+                {"type", {{"type", "string"}, {"enum", add_volume_type_names()}, {"description", "What the volume is"}}},
                 {"shape", {{"type", "string"}, {"enum", primitive_shape_names()},
                            {"description", "A primitive, as the object list's submenu offers them; or give file_path"}}},
                 {"file_path", {{"type", "string"},
                                {"description", "A model file (STL, 3MF, STEP, OBJ, ...) whose meshes become the volume; or give shape"}}},
-                {"size", primitive_size_schema()}
+                {"size", primitive_size_schema()},
+                {"host_volume_id", {{"type", "integer"}, {"minimum", 0},
+                                    {"description", "painted_modifier only: the model part it is painted on; default the object's first "
+                                                    "part, as the object list's menu does"}}},
+                {"depth_mm", {{"type", "number"}, {"minimum", 0}, {"maximum", 1000},
+                              {"description", "painted_modifier only: how far into the part the painted area reaches, mm; "
+                                              "0 = through the part to the nearest unpainted surface"}}}
             }},
             {"required", {"object_id", "type"}}
         },

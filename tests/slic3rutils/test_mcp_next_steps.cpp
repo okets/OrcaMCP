@@ -525,13 +525,7 @@ TEST_CASE("An object with no painted modifier points at adding one over a part",
     CHECK(steps[0].arguments == json{{"object_id", 0}, {"type", "painted_modifier"}, {"host_volume_id", 1}});
     CHECK(mentions(steps[0].why, "no painted modifier"));
     CHECK(mentions(steps[0].why, "volume 1"));
-    // add_volume declares host_volume_id, and the painted_modifier type value, with the branch that takes
-    // them; every other part of the step passes today's schema -- as it shows with the modifier type and
-    // without the host argument.
-    NextStep as_modifier = steps[0];
-    as_modifier.arguments["type"]          = "modifier";
-    as_modifier.arguments.erase("host_volume_id");
-    CHECK(unusable(as_modifier) == std::nullopt);
+    CHECK(unusable(steps[0]) == std::nullopt);
 }
 
 TEST_CASE("Painted modifiers left without a part point at deleting them, naming every one", "[McpNextSteps][orcamcp]")
@@ -718,6 +712,10 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
             steps.push_back(std::move(step));
     for (NextStep& step : new_volume_next_steps(0, 1, "modifier", true))
         steps.push_back(std::move(step));
+    for (NextStep& step : add_painted_modifier_next_steps(0, 1))
+        steps.push_back(std::move(step));
+    for (NextStep& step : orphaned_painted_modifier_next_steps(0, {3, 4}))
+        steps.push_back(std::move(step));
     for (NextStep& step : assembled_next_steps(0))
         steps.push_back(std::move(step));
     for (const std::vector<int>& on_no_plate : {std::vector<int>{}, std::vector<int>{3}})
@@ -747,7 +745,7 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
             steps.push_back(std::move(step));
     for (NextStep& step : repair_timed_out_next_steps({4, 7}))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 47);
+    REQUIRE(steps.size() == 49);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

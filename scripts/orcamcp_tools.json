@@ -278,13 +278,24 @@
     },
     {
       "category": "Models",
-      "description": "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized the app's default for its shape, or by size (mm, every field of the shape: cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter), and stands beside the object at its right-front corner, on the bed: move_object and scale_object with volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
+      "description": "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized the app's default for its shape, or by size (mm, every field of the shape: cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter), and stands beside the object at its right-front corner, on the bed: move_object and scale_object with volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs. type painted_modifier adds an empty painted modifier on a model part (no shape, size or file): paint its area with paint_object mode painted_modifier, give it settings with set_object_config volume_id.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "depth_mm": {
+            "description": "painted_modifier only: how far into the part the painted area reaches, mm; 0 = through the part to the nearest unpainted surface",
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "number"
+          },
           "file_path": {
             "description": "A model file (STL, 3MF, STEP, OBJ, ...) whose meshes become the volume; or give shape",
             "type": "string"
+          },
+          "host_volume_id": {
+            "description": "painted_modifier only: the model part it is painted on; default the object's first part, as the object list's menu does",
+            "minimum": 0,
+            "type": "integer"
           },
           "object_id": {
             "description": "Object index (0-based)",
@@ -338,7 +349,8 @@
               "negative_volume",
               "modifier",
               "support_blocker",
-              "support_enforcer"
+              "support_enforcer",
+              "painted_modifier"
             ],
             "type": "string"
           }

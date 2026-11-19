@@ -120,6 +120,60 @@ TEST_CASE("A painted modifier is refused where it follows its host part, and the
     CHECK(painted_modifiers_on(object, 0).empty());
 }
 
+TEST_CASE("add_volume takes one type more than set_volume_type: painted_modifier", "[PartEdits][orcamcp]")
+{
+    CHECK(add_volume_type_names() == std::vector<std::string>{"part", "negative_volume", "modifier", "support_blocker", "support_enforcer",
+                                                               "painted_modifier"});
+    // The five names Change Type takes, in their order, and painted_modifier last: a Change Type menu never
+    // adds a painted modifier, so volume_type_names and volume_type_from_name stay as the menu has them.
+    CHECK(std::equal(volume_type_names().begin(), volume_type_names().end(), add_volume_type_names().begin()));
+    CHECK(add_volume_type_names().back() == "painted_modifier");
+    CHECK_FALSE(volume_type_from_name("painted_modifier"));
+}
+
+TEST_CASE("A painted modifier's volume row describes it, and its coverage comes only when asked", "[PartEdits][orcamcp]")
+{
+    Model        model;
+    ModelObject& object  = two_part_object(model);
+    ModelVolume* host    = object.volumes[1];
+    ModelVolume* painted = object.add_painted_modifier(*host);
+    painted->painted_modifier_depth    = 1.5f;
+    painted->config.set_key_value("wall_loops", new ConfigOptionInt(2));
+    const int host_id = int(std::find(object.volumes.begin(), object.volumes.end(), host) - object.volumes.begin());
+    const int pm_id   = int(std::find(object.volumes.begin(), object.volumes.end(), painted) - object.volumes.begin());
+
+    const nlohmann::json rows = volume_rows_json(object);
+    REQUIRE(rows.size() == 3);
+    const nlohmann::json& row = rows[pm_id];
+    CHECK(row["type"] == "painted_modifier");
+    CHECK(row["host_volume_id"] == host_id);
+    CHECK_THAT(row["depth_mm"].get<double>(), WithinAbs(1.5, 1e-5));
+    CHECK(row["painted"] == false);
+    CHECK(row["settings"] == nlohmann::json::array({"wall_loops"}));
+    // The cheap row builds no selector: a fresh modifier's coverage comes only when the caller asks for it.
+    CHECK_FALSE(row.contains("painted_facets"));
+    CHECK_FALSE(row.contains("coverage_percent"));
+
+    const nlohmann::json deep = volume_rows_json(object, true);
+    CHECK(deep[pm_id]["painted_facets"] == 0); // painted nowhere: none of the host surface claimed
+    CHECK_THAT(deep[pm_id]["coverage_percent"].get<double>(), WithinAbs(0., 1e-9));
+
+    // A part's row carries none of these keys, with the flag or without.
+    auto describes_nothing = [](const nlohmann::json& part_row) {
+        for (const char* key : {"host_volume_id", "depth_mm", "painted", "settings", "painted_facets", "coverage_percent"})
+            if (part_row.contains(key))
+                return false;
+        return true;
+    };
+    CHECK(describes_nothing(rows[0]));
+    CHECK(describes_nothing(rows[host_id]));
+    CHECK(describes_nothing(deep[0]));
+    CHECK(describes_nothing(deep[host_id]));
+
+    // Deleting one is the object list's own Delete: nothing refuses it.
+    CHECK_FALSE(volume_delete_refusal(0, object, pm_id, {}));
+}
+
 TEST_CASE("A volume id names one of the object's volumes", "[PartEdits][orcamcp]")
 {
     Model        model;

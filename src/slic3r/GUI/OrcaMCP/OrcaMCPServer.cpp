@@ -5691,7 +5691,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // multi-filament however the object is set. own_filament is null when the
                 // volume inherits the object's; effective_filament is what prints.
                 // Each with its box and position on instance 0, which move_object and friends take with volume_id.
-                result["volumes"]        = OrcaMCP::volume_rows_json(*obj);
+                result["volumes"]        = OrcaMCP::volume_rows_json(*obj, /*with_paint_coverage=*/true);
                 result["filament"]       = obj->config.has("extruder") ? obj->config.extruder() : 1;
                 result["filaments_used"] = OrcaMCP::effective_object_filaments(*obj);
                 result.update(OrcaMCP::texture_object_fields(*obj));

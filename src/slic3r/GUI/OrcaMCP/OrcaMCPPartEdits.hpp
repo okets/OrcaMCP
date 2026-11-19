@@ -54,6 +54,10 @@ std::string volume_text(int object_id, int volume_id);
 const std::vector<std::string>& volume_type_names();
 std::optional<ModelVolumeType> volume_type_from_name(const std::string& name);
 
+// add_volume's `type` values: the types above plus "painted_modifier" last (the object list's Add Painted
+// Modifier, which is not a Change Type target, so set_volume_type keeps refusing it).
+const std::vector<std::string>& add_volume_type_names();
+
 // What is wrong with `volume_id` for object `object_id`, or nothing: it must be one of its volumes, as
 // get_object_info lists them.
 std::optional<std::string> volume_id_error(int object_id, const ModelObject& object, int volume_id);
@@ -81,9 +85,12 @@ BoundingBoxf3 volume_world_box(const ModelObject& object, std::size_t volume_idx
 
 // One volume as the part tools report it: {volume_id, name, type, own_filament (null: the object's),
 // effective_filament, bounding_box {min, max} and position (its centre), in plate mm on instance 0}.
+// A painted modifier's row adds painted_modifier_row_fields' keys. Cheap: never builds a selector.
 nlohmann::json volume_row_json(const ModelObject& object, std::size_t volume_idx);
-// Every volume of the object, in order.
-nlohmann::json volume_rows_json(const ModelObject& object);
+// Every volume of the object, in order. With with_paint_coverage, a painted modifier's row also carries
+// painted_modifier_coverage_json's keys (painted_facets, coverage_percent), which build a selector over
+// the mesh -- asked for only where a response reports coverage.
+nlohmann::json volume_rows_json(const ModelObject& object, bool with_paint_coverage = false);
 
 // ---- Cut objects ----
 

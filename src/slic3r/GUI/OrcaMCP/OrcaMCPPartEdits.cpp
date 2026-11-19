@@ -5,6 +5,7 @@
 #include "OrcaMCPFilamentModel.hpp"
 #include "OrcaMCPInstanceEdits.hpp"
 #include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPPaintedModifier.hpp"
 #include "OrcaMCPPaintSelect.hpp"
 #include "OrcaMCPTextureDisplacement.hpp"
 #include "OrcaMCPUiJob.hpp"
@@ -151,6 +152,18 @@ std::optional<ModelVolumeType> volume_type_from_name(const std::string& name)
     return std::nullopt;
 }
 
+const std::vector<std::string>& add_volume_type_names()
+{
+    // painted_modifier last: the object list's Add Painted Modifier, which Change Type does not offer, so
+    // volume_type_names (and volume_type_from_name, which set_volume_type reads) stay the menu's own five.
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> out = volume_type_names();
+        out.push_back("painted_modifier");
+        return out;
+    }();
+    return names;
+}
+
 std::optional<std::string> volume_id_error(int object_id, const ModelObject& object, int volume_id)
 {
     if (volume_id >= 0 && std::size_t(volume_id) < object.volumes.size())
@@ -236,12 +249,13 @@ BoundingBoxf3 volume_world_box(const ModelObject& object, std::size_t volume_idx
     return volume.mesh().transformed_bounding_box(instance_matrix(object, instance_idx) * volume.get_matrix());
 }
 
-nlohmann::json volume_rows_json(const ModelObject& object)
+nlohmann::json volume_rows_json(const ModelObject& object, bool with_paint_coverage)
 {
     nlohmann::json rows = nlohmann::json::array();
     for (const VolumeFilament& v : describe_volume_filaments(object)) {
-        const BoundingBoxf3 box    = volume_world_box(object, std::size_t(v.volume_id));
-        const Vec3d         centre = box.center();
+        const std::size_t   volume_idx = std::size_t(v.volume_id);
+        const BoundingBoxf3 box        = volume_world_box(object, volume_idx);
+        const Vec3d         centre     = box.center();
         nlohmann::json row = {{"volume_id", v.volume_id},
                               {"name", v.name},
                               {"type", v.type},
@@ -249,7 +263,13 @@ nlohmann::json volume_rows_json(const ModelObject& object)
                               {"effective_filament", v.effective_filament},
                               {"bounding_box", bbox_json(box)},
                               {"position", {{"x", centre.x()}, {"y", centre.y()}, {"z", centre.z()}}}};
-        row.update(texture_volume_fields(object, std::size_t(v.volume_id)));
+        row.update(texture_volume_fields(object, volume_idx));
+        if (object.volumes[volume_idx]->is_painted_modifier()) {
+            row.update(painted_modifier_row_fields(object, volume_idx));
+            // The selector it reads is what makes coverage not-cheap: only where a caller reports it.
+            if (with_paint_coverage)
+                row.update(painted_modifier_coverage_json(*object.volumes[volume_idx]));
+        }
         rows.push_back(std::move(row));
     }
     return rows;
