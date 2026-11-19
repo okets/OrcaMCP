@@ -290,7 +290,7 @@ std::optional<int64_t> timeout_after_connect(const toml::table* server_before, c
     if (before == nullptr)
         return minimum;
     if (const toml::value<int64_t>* integer = before->as_integer())
-        return std::max(integer->get(), minimum);
+        return (std::max)(integer->get(), minimum); // parenthesized: windows.h may define max
     return std::nullopt;
 }
 
