@@ -2262,8 +2262,9 @@ row at once, so `GetChildren` read the freed object. Deleting a multi-part objec
 MCP's `merge_parts` and `delete_object` -- crashed when the freed memory had been reused (2026-11-23, a two-part
 Assembly; reproduced on the dev build, one run in two). Ours reads it only while the model still holds it
 (`live_model_object`, comparing pointers, so a freed one is never read); a row whose object is gone keeps the list's
-order. On a 0, upstream changed that read: check that it no longer dereferences the row's object during a delete, take
-upstream's, and re-run `slic3rutils_tests "[PartEdits]"`, then merge_parts a two-part object several times on macOS.
+order. Offered upstream as PR OrcaSlicer/OrcaSlicer#17825 (2026-11-23). On a 0, upstream changed that read: check that it no
+longer dereferences the row's object during a delete, take upstream's, and re-run `slic3rutils_tests "[ObjectList]"`, then
+merge_parts a two-part object several times on macOS.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
