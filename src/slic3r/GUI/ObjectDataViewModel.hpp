@@ -352,6 +352,12 @@ void erase_object_from_volume_maps(std::map<int, std::map<int, int>>& maps, int 
 // The maps once object `from` moves to index `to`, the objects between shifting one place.
 void move_object_in_volume_maps(std::map<int, std::map<int, int>>& maps, int from, int to);
 
+// Orca: an object row's model object (`row_object`), or null once the model no longer holds it. The list
+// deletes the model object before the row, and removes the row's part rows one by one; on macOS each one
+// makes the outline reload the object row at once, while its model object is already freed. Compares
+// pointers only, so a freed one is never read.
+const ModelObject* live_model_object(const ModelObject* row_object, const std::vector<ModelObject*>& model_objects);
+
 class ObjectDataViewModel :public wxDataViewModel
 {
     std::vector<ObjectDataViewModelNode*>       m_plates;

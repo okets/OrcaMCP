@@ -1464,6 +1464,7 @@ echo "CF a geometry import's options and name clean-up dialogs (AMF, CAD 3MF, ST
 echo "CG upstream's primitive size lives in a dialog only: ObjectList's load_generic_subobject / load_shape_object take no size (a hook: 0 = expected, keep ours): $(U src/slic3r/GUI/GUI_ObjectList.hpp | grep -c 'const std::vector<double>\* size')"
 echo "CH Plater::rename_plate's refresh after the name is inline, which MCP's set_plate_settings needs too (a move: 0 = expected, keep ours; non-zero = upstream has one): $(U src/slic3r/GUI/Plater.cpp | grep -c 'refresh_after_plate_rename')"
 echo "CI upstream's bundled Python finder is file-private, which ours declares in BundledPython.hpp for MCP's Connect (a move: 0 = expected, keep ours) / upstream still ships the runtime (non-zero = expected; 0 = Connect has no Python to name): $(U src/slic3r/plugin/PythonInterpreter.cpp | grep -c 'BundledPython.hpp') / $(U src/CMakeLists.txt | grep -c 'Copying Python runtime into the build tree')"
+echo "CJ an object row's child order reads its model object unchecked, which a delete has already freed when macOS reloads the row (merge_parts and Mesh boolean crashed, 2026-11-23; 1 = bug still there): $(U src/slic3r/GUI/ObjectDataViewModel.cpp | grep -c 'const ModelObject& object = \*node->m_model_object;')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -2252,6 +2253,17 @@ declaration and drop ours. On a 0 second count, upstream no longer copies the ru
 back to the system's `python3` on every platform (the Linux AppImage's path, `choose_interpreter`), which most Windows
 and macOS users lack -- re-check `MCPClientConfig::bridge_interpreter` before merging, and re-run
 `slic3rutils_tests "[McpClientConfig]"`.
+
+Item CJ: upstream's geometry import (fa5f7e3db4) made an object row list its parts in the order the import gave them,
+reading the row's `ModelObject` in `ObjectDataViewModel::GetChildren`. The object list deletes an object's
+`ModelObject` first (`del_object`) and its row after, part rows one by one (`ObjectDataViewModel::Delete`); each part
+row's removal fires `ItemChanged` (`DeleteSettings`, `NEW_OBJECT_SETTING`), and on macOS the outline reloads the object
+row at once, so `GetChildren` read the freed object. Deleting a multi-part object -- the list's Delete, Mesh boolean,
+MCP's `merge_parts` and `delete_object` -- crashed when the freed memory had been reused (2026-11-23, a two-part
+Assembly; reproduced on the dev build, one run in two). Ours reads it only while the model still holds it
+(`live_model_object`, comparing pointers, so a freed one is never read); a row whose object is gone keeps the list's
+order. On a 0, upstream changed that read: check that it no longer dereferences the row's object during a delete, take
+upstream's, and re-run `slic3rutils_tests "[PartEdits]"`, then merge_parts a two-part object several times on macOS.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

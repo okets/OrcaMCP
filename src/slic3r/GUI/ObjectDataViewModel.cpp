@@ -991,6 +991,13 @@ wxDataViewItem ObjectDataViewModel::DeletePlate(const int plate_idx)
     return ret_item;
 }
 
+const ModelObject* live_model_object(const ModelObject* row_object, const std::vector<ModelObject*>& model_objects)
+{
+    if (row_object == nullptr)
+        return nullptr;
+    return std::find(model_objects.begin(), model_objects.end(), row_object) != model_objects.end() ? row_object : nullptr;
+}
+
 void erase_object_from_volume_maps(std::map<int, std::map<int, int>>& maps, int obj_idx)
 {
     std::map<int, std::map<int, int>> kept;
@@ -2150,8 +2157,11 @@ unsigned int ObjectDataViewModel::GetChildren(const wxDataViewItem &parent, wxDa
     std::vector<ObjectDataViewModelNode*> children;
     for (auto* child : node->GetChildren())
         children.push_back(child);
-    if (node->m_type == itObject && node->m_model_object != nullptr) {
-        const ModelObject& object = *node->m_model_object;
+    // Orca: only while the model still holds the row's object: a delete frees it before the row goes, and on
+    // macOS the outline asks for the row's children in between (live_model_object).
+    const ModelObject* live_object = node->m_type == itObject ? live_model_object(node->m_model_object, wxGetApp().model().objects) : nullptr;
+    if (live_object != nullptr) {
+        const ModelObject& object = *live_object;
         if (std::any_of(object.volumes.begin(), object.volumes.end(), [](const ModelVolume* volume) {
                 return volume->import_display_order >= 0;
             })) {

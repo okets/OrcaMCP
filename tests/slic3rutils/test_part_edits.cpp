@@ -639,6 +639,22 @@ TEST_CASE("Deleting an object from the list drops its row map and moves the late
     CHECK(maps == std::map<int, std::map<int, int>>{{0, {{0, 0}, {1, 1}}}, {1, {{0, 1}}}});
 }
 
+// The list deletes an object's model object first and its row after, part rows one by one; on macOS each part
+// row's change makes the outline reload the object row at once, whose child order read the freed object
+// (merge_parts and the list's Mesh boolean crashed on a two-part object, 2026-11-23).
+TEST_CASE("An object row reads its model object only while the model still holds it", "[PartEdits][orcamcp]")
+{
+    Slic3r::Model model;
+    Slic3r::ModelObject* held = model.add_object();
+    model.add_object();
+    Slic3r::Model other;
+    const Slic3r::ModelObject* elsewhere = other.add_object();
+
+    CHECK(Slic3r::GUI::live_model_object(held, model.objects) == held);
+    CHECK(Slic3r::GUI::live_model_object(elsewhere, model.objects) == nullptr);
+    CHECK(Slic3r::GUI::live_model_object(nullptr, model.objects) == nullptr);
+}
+
 TEST_CASE("Moving an object in the list moves its row map with it", "[PartEdits][orcamcp]")
 {
     std::map<int, std::map<int, int>> maps = {{0, {{0, 0}}}, {1, {{0, 1}}}, {2, {{0, 2}}}};
