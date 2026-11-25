@@ -88,7 +88,7 @@ cd build && ctest --output-on-failure
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Transport | HTTP + stdio bridge | OrcaSlicer is a GUI app; pure stdio doesn't work. `/mcp` is also MCP's Streamable HTTP, so a client can connect without the bridge, to one running instance and its 113 tools (`docs/setup/configuration.md`) |
+| Transport | HTTP + stdio bridge | OrcaSlicer is a GUI app; pure stdio doesn't work. `/mcp` is also MCP's Streamable HTTP, so a client can connect without the bridge, to one running instance and its 114 tools (`docs/setup/configuration.md`) |
 | Server location | Embedded in OrcaSlicer | Reuse existing HTTP server, from port 13618; several instances each take their own port (see "Several instances at once") |
 | Protocol | JSON-RPC 2.0 over HTTP | Standard MCP protocol |
 | Threading | Main thread via CallAfter | OpenGL/GUI operations require main thread |
@@ -99,9 +99,9 @@ cd build && ctest --output-on-failure
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (113 in the app, 117 reachable)
+### MCP Tools (114 in the app, 118 reachable)
 
-The registry holds 117: the app serves 113 through `tools/list`, and four are registered as
+The registry holds 118: the app serves 114 through `tools/list`, and four are registered as
 bridge-only and served by the bridge: `start_orca`, which launches OrcaSlicer and so cannot be
 answered by it, `wait_for_slice`, a wait the app's one request thread could not do without
 stalling every other call, and `list_instances` / `select_instance`, which choose the running app

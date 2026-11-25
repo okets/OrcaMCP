@@ -137,6 +137,7 @@ MediaPlayCtrl::MediaPlayCtrl(wxWindow *parent, wxMediaCtrl3 *media_ctrl, const w
 
     m_button_play->Bind(wxEVT_COMMAND_BUTTON_CLICKED, [this](auto &e) { TogglePlay(); });
     m_button_play->Bind(wxEVT_RIGHT_UP, [this](auto & e) {
+        m_frame_capture.invalidate();
         if (m_active_media_controller)
             m_active_media_controller->Play();
     });
@@ -149,6 +150,7 @@ MediaPlayCtrl::MediaPlayCtrl(wxWindow *parent, wxMediaCtrl3 *media_ctrl, const w
                 if (c.IsSupported(wxDF_TEXT)) {
                     wxTextDataObject data;
                     c.GetData(data);
+                    m_frame_capture.invalidate();
                     Stop();
                     m_url = data.GetText();
                     load();
@@ -251,6 +253,7 @@ void MediaPlayCtrl::SetMachineObject(MachineObject* obj)
 
     const CameraStreamMode mode = current_mode();
     if (mode != m_last_mode) {
+        m_frame_capture.invalidate();
         if (m_last_state != MEDIASTATE_IDLE) {
             m_failed_code = 0; // a mode switch is not a stream failure - don't arm back-off
             Stop(" ");
@@ -270,6 +273,7 @@ void MediaPlayCtrl::SetMachineObject(MachineObject* obj)
                                        mode == CameraStreamMode::http_snapshot || mode == CameraStreamMode::rtsp;
     const bool uses_webrtc = mode == CameraStreamMode::webrtc;
     const std::string machine = obj ? obj->get_dev_id() : "";
+    if (machine != m_machine) m_frame_capture.invalidate();
     bool changed = false;
 
     if (uses_local_camera_url) {
@@ -402,9 +406,46 @@ void refresh_agora_url(char const* device, char const* dev_ver, char const* chan
     }, wxGetApp().get_printer_cloud_provider());
 }
 
-void MediaPlayCtrl::Play()
+std::uint64_t MediaPlayCtrl::BeginFrameCapture(const std::string& printer_id)
 {
-    if ((m_next_retry.IsValid() && wxDateTime::Now() < m_next_retry) || !IsShownOnScreen() || m_last_state != MEDIASTATE_IDLE)
+    // Restrict automatic start to native Bambu LAN playback. No cloud callback,
+    // discovery, printer selection, or credential acquisition belongs to a look.
+    if (printer_id.empty() || printer_id != m_machine || !m_bambu_liveview || !m_lan_mode ||
+        m_active_media_controller != m_media_ctrl || !IsEnabled() || !m_camera_exists ||
+        m_device_busy || m_lan_ip.empty() || m_lan_passwd.empty() || m_lan_proto <= LiveviewLocal::LVL_Disable)
+        return 0;
+    const bool playing = m_last_state != MEDIASTATE_IDLE;
+    const auto lease = m_frame_capture.begin(playing);
+    if (!playing) {
+        Play(true);
+        if (m_last_state == MEDIASTATE_IDLE) {
+            m_frame_capture.invalidate();
+            return 0;
+        }
+    }
+    return lease;
+}
+
+bool MediaPlayCtrl::FrameCaptureValid(std::uint64_t lease, const std::string& printer_id) const
+{
+    return m_frame_capture.valid(lease) && m_machine == printer_id && m_active_media_controller == m_media_ctrl;
+}
+
+bool MediaPlayCtrl::CaptureFrame(std::uint64_t lease, const std::string& printer_id, wxImage& image,
+                                 std::chrono::steady_clock::time_point& decoded,
+                                 std::chrono::system_clock::time_point& received)
+{
+    return FrameCaptureValid(lease, printer_id) && m_media_ctrl->CopyDecodedFrame(image, decoded, received);
+}
+
+void MediaPlayCtrl::EndFrameCapture(std::uint64_t lease)
+{
+    if (m_frame_capture.finish(lease)) StopPlayback();
+}
+
+void MediaPlayCtrl::Play(bool capture)
+{
+    if ((m_next_retry.IsValid() && wxDateTime::Now() < m_next_retry) || (!capture && !IsShownOnScreen()) || m_last_state != MEDIASTATE_IDLE)
         return;
 
     const CameraStreamMode mode = current_mode();
@@ -593,6 +634,7 @@ void start_ping_test();
 
 void MediaPlayCtrl::StopWebStream()
 {
+    m_frame_capture.invalidate();
     if (m_last_state == MEDIASTATE_IDLE)
         return;
     if (m_active_media_controller && m_active_media_controller == m_web_ctrl)
@@ -604,6 +646,7 @@ void MediaPlayCtrl::StopWebStream()
 
 void MediaPlayCtrl::StopPlayback()
 {
+    m_frame_capture.invalidate();
     m_failed_code = 0;
     Stop();
     m_failed_retry = 0;
@@ -717,7 +760,7 @@ void MediaPlayCtrl::Stop(wxString const &msg, wxString const &msg2)
     ++m_failed_retry;
     bool local = tunnel == "local" || tunnel == "rtsp" ||
                  tunnel == "rtsps";
-    if (m_failed_code < 0 && last_state != wxMEDIASTATE_PLAYING && local && (m_failed_retry > 1 || m_user_triggered)) {
+    if (!m_frame_capture.owned() && m_failed_code < 0 && last_state != wxMEDIASTATE_PLAYING && local && (m_failed_retry > 1 || m_user_triggered)) {
         m_next_retry = wxDateTime(); // stop retry
         if (wxGetApp().show_modal_ip_address_enter_dialog(false, _L("LAN Connection Failed (Failed to start liveview)"))) {
             m_failed_retry = 0;
@@ -731,6 +774,7 @@ void MediaPlayCtrl::Stop(wxString const &msg, wxString const &msg2)
         }
     }
     m_user_triggered = false;
+    if (m_frame_capture.owned()) m_next_retry = wxDateTime();
     if (m_next_retry.IsValid())
         m_next_retry = wxDateTime::Now() + wxTimeSpan::Seconds(5 * m_failed_retry);
 }
@@ -758,6 +802,7 @@ void MediaPlayCtrl::on_webrtc_status(WebRtcMediaController::Status status)
 
 void MediaPlayCtrl::TogglePlay()
 {
+    m_frame_capture.invalidate();
     BOOST_LOG_TRIVIAL(info) << "MediaPlayCtrl::TogglePlay";
     if (m_last_state != MEDIASTATE_IDLE) {
         m_next_retry = wxDateTime();
@@ -778,6 +823,7 @@ void MediaPlayCtrl::TogglePlay()
 
 void MediaPlayCtrl::ToggleStream()
 {
+    m_frame_capture.invalidate();
     std::string file_url = data_dir() + "/cameratools/url.txt";
     if (m_streaming) {
         boost::nowide::ofstream file(file_url);
@@ -1010,6 +1056,11 @@ void MediaPlayCtrl::on_show_hide(wxShowEvent &evt)
 {
     evt.Skip();
     if (m_isBeingDeleted) return;
+    if (m_frame_capture.owned()) {
+        if (IsShownOnScreen()) m_frame_capture.invalidate(); // the owner now owns visible playback
+        return;
+    }
+    m_frame_capture.invalidate();
     m_failed_retry = 0;
     if (!IsShownOnScreen())
         Stop();

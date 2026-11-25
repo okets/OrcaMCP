@@ -9,6 +9,8 @@
 #define MediaPlayCtrl_h
 
 #include "WebRtcMediaController.hpp"
+#include "CameraCapture.hpp"
+#include <wx/image.h>
 #include "slic3r/Utils/IPrinterAgent.hpp"
 
 #include <wx/gdicmn.h>
@@ -59,6 +61,15 @@ public:
     // back-off or LAN dialog behind.
     void StopPlayback();
 
+    // Main-thread bounded capture lease; never exports the native connection URL.
+    const std::string& FramePrinterId() const { return m_machine; }
+    std::uint64_t BeginFrameCapture(const std::string& printer_id);
+    bool CaptureFrame(std::uint64_t lease, const std::string& printer_id, wxImage& image,
+                      std::chrono::steady_clock::time_point& decoded,
+                      std::chrono::system_clock::time_point& received);
+    bool FrameCaptureValid(std::uint64_t lease, const std::string& printer_id) const;
+    void EndFrameCapture(std::uint64_t lease);
+
     bool IsStreaming() const;
 
     void ToggleStream();
@@ -70,7 +81,7 @@ public:
 protected:
     void onStateChanged(wxMediaEvent & event);
 
-    void Play();
+    void Play(bool capture = false);
 
     void Stop(wxString const &msg = {}, wxString const &msg2 = {});
 
@@ -101,6 +112,8 @@ private:
     static inline const wxMediaState MEDIASTATE_INITIALIZING = static_cast<wxMediaState>(4);
     static inline const wxMediaState MEDIASTATE_LOADING = static_cast<wxMediaState>(5);
     static inline const wxMediaState MEDIASTATE_BUFFERING = static_cast<wxMediaState>(6);
+
+    CameraCaptureLease m_frame_capture;
 
     // token
     std::shared_ptr<int> m_token = std::make_shared<int>(0);

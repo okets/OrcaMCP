@@ -1,4 +1,5 @@
 #include "OrcaMCPServer.hpp"
+#include "OrcaMCPBambuCamera.hpp"
 #include <algorithm>
 #include <chrono>
 #include <boost/format.hpp>
@@ -910,6 +911,9 @@ nlohmann::json OrcaMCPServer::handle_tools_call(const nlohmann::json& params)
     } catch (...) {
         throw std::runtime_error("Tool '" + tool_name + "' failed with an unknown exception");
     }
+
+    if (tool_name == "get_bambu_camera_frame")
+        return camera_frame_content(std::move(tool_result));
 
     // Format as MCP tool result
     return {
